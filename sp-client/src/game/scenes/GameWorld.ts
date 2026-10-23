@@ -3,12 +3,12 @@ import { GameAsset } from '../objects/GameAsset';
 import { GroundItem } from '../objects/GroundItem';
 import { DEFAULT_GEAR } from '../../utils/PlayerAppearanceManager';
 import { Player } from '../objects/Player';
-import { Monster } from '../objects/Monster';
+import { Monster, type WanderArea } from '../objects/Monster';
 import { ArrowProjectile, isArrowProjectileTarget } from '../effects/ArrowProjectile';
 import { NPC } from '../objects/NPC';
 import { HBMap, TILE_SIZE } from '../assets/HBMap';
 import { EventBus } from '../EventBus';
-import { canvasToScreenPosition, convertWorldPosToPixelPos, convertPixelPosToWorldPos, getNextDirection, Direction, findMovableLocation, getDistance, isCellMovable } from '../../utils/CoordinateUtils';
+import { canvasToScreenPosition, convertWorldPosToPixelPos, convertPixelPosToWorldPos, getNextDirection, Direction, findFreeCellInArea, findMovableLocation, getDistance, isCellMovable } from '../../utils/CoordinateUtils';
 import { getObjectsNearPixel, getObjectsAtWorldCell } from '../../utils/SpatialGrid';
 import {
     DEPTH_MULTIPLIER,
@@ -30,6 +30,8 @@ import { prepareMapForGameWorld, shouldLoadMapAssetsOnDemand } from '../../utils
 import { collectEquippedItemAppearanceSpriteBasenamesForPrefetch, loadPlayerItemAppearanceOnDemand } from '../../utils/ItemAssets';
 import { SoundManager } from '../../utils/SoundManager';
 import { getMonsterData, MONSTERS } from '../../constants/Monsters';
+import { attackSpeedMsToSlider, getMonsterStats, movementSpeedMsToSlider } from '../../constants/MonsterStats';
+import { getWorldData, type DwellArea } from '../../constants/Worlds';
 import { getNPCData } from '../../constants/NPCs';
 import { areMonsterAssetsLoaded, loadMonsterAssetsOnDemand, shouldLoadMonsterAssetsOnDemand } from '../../utils/MonsterAssets';
 import {
@@ -88,6 +90,33 @@ import { CastManager } from '../../utils/CastManager';
 import { WeatherManager } from '../../utils/WeatherManager';
 import { mapDialogStore } from '../../ui/store/MapDialog.store';
 
+/** Extra cells around the camera view in which idle monsters keep running AI */
+const MONSTER_ACTIVE_MARGIN_CELLS = 6;
+
+/**
+ * Stats and placement for creating a monster with GameWorld.spawnMonster.
+ */
+type SpawnMonsterOptions = {
+    x: number;
+    y: number;
+    spriteName: string;
+    direction: Direction;
+    hp: number;
+    attackDamage: number;
+    /** Movement speed slider value (0-100) */
+    movementSpeed: number;
+    /** Attack speed slider value (1-100) */
+    attackSpeed: number;
+    followDistance: number;
+    attackDistance: number;
+    attackType: AttackType;
+    transparency?: number;
+    chilledEffect?: boolean;
+    berserkedEffect?: boolean;
+    wanderArea?: WanderArea;
+    wanderRestMs?: { min: number; max: number };
+};
+
 /**
  * Main game scene. Manages player, monsters, NPCs, ground items, map, camera, input,
  * spell casting, weather, and UI event handling. Loads map on init, spawns objects, and runs the game loop.
@@ -103,6 +132,8 @@ export class GameWorld extends Scene {
     private monsters: Monster[] = [];
     /** Next monster ID to assign */
     private nextMonsterId: number = 0;
+    /** Spawn area of each living monster that came from one, so it can be replaced after its corpse is removed */
+    private dwellAreaByMonsterId = new Map<number, DwellArea>();
     /** List of NPC instances - cleaned up in shutdown() */
     private npcs: NPC[] = [];
     /** Next NPC ID to assign */
@@ -198,8 +229,14 @@ export class GameWorld extends Scene {
             this.handleMapObjectCollisions();
         }
 
-        // Update monsters
+        // Update monsters. Idle monsters well outside the camera view are skipped: with hundreds of spawn-area
+        // monsters per map, only the ones the player can see (or that are busy) need to run AI.
+        const activeBounds = this.getMonsterActiveBounds();
         for (const monster of this.monsters) {
+            if (monster.isAtRest() &&
+                !activeBounds.contains(convertWorldPosToPixelPos(monster.getWorldX()), convertWorldPosToPixelPos(monster.getWorldY()))) {
+                continue;
+            }
             monster.update(delta);
         }
 
@@ -238,6 +275,7 @@ export class GameWorld extends Scene {
             monster.destroy();
         }
         this.monsters = [];
+        this.dwellAreaByMonsterId.clear();
 
         // Destroy all NPCs
         for (const npc of this.npcs) {
@@ -767,84 +805,24 @@ export class GameWorld extends Scene {
                 return;
             }
 
-            // Get monster data to retrieve sounds
-            const monsterData = MONSTERS.find(monster => monster.spriteName === data.spriteName);
-
-            if (!monsterData) {
-                console.warn(`[GameWorld] Cannot summon monster: unknown sprite ${data.spriteName}`);
-                return;
-            }
-
-            // Generate unique monster ID
-            const monsterId = this.nextMonsterId++;
-
-            const lazyMonsterAssets = shouldLoadMonsterAssetsOnDemand();
-            const concreteAssetsReady = !lazyMonsterAssets || areMonsterAssetsLoaded(this, data.spriteName);
-            const visualSpriteName = concreteAssetsReady ? data.spriteName : MONSTER_PLACEHOLDER_SPRITE;
-            const visualTemplate = concreteAssetsReady ? monsterData : getMonsterData(MONSTER_PLACEHOLDER_SPRITE);
-            if (!visualTemplate) {
-                console.warn(`[GameWorld] Cannot summon monster: missing placeholder sprite '${MONSTER_PLACEHOLDER_SPRITE}'`);
-                return;
-            }
-
-            // Create new monster at the movable location
-            try {
-                const monster = new Monster(this, {
-                    x: movableLocation.x,
-                    y: movableLocation.y,
-                    spriteName: visualSpriteName,
-                    displayName: monsterData.name,
-                    direction: data.direction,
-                    hp: data.health,
-                    maxHp: data.health,
-                    attackDamage: data.damage,
-                    soundManager: this.soundManager,
-                    map,
-                    states: visualTemplate.states,
-                    movementSpeed: data.movementSpeed,
-                    attackSpeed: data.attackSpeed,
-                    player: this.player,
-                    playerIsDead: this.player?.getIsDead() ?? false,
-                    followDistance: data.followDistance,
-                    attackDistance: data.attackDistance,
-                    attackType: data.attackType,
-                    corpseDecayTime: visualTemplate.corpseDecayTime,
-                    monsterId,
-                    temporalCoefficient: visualTemplate.temporalCoefficient,
-                    shadow: visualTemplate.shadow,
-                    opacity: visualTemplate.opacity,
-                    height: visualTemplate.height,
-                    bowAttack: visualTemplate.bowAttack,
-                    transparency: data.transparency,
-                    chilledEffect: data.chilledEffect,
-                    berserkedEffect: data.berserkedEffect,
-                });
-
-                this.monsters.push(monster);
-                if (!concreteAssetsReady) {
-                    loadMonsterAssetsOnDemand(this, data.spriteName)
-                        .then(() => {
-                            const currentMonster = this.monsters.find((entry) => entry.getMonsterId() === monsterId);
-                            if (!currentMonster) {
-                                return;
-                            }
-                            currentMonster.applyLoadedMonsterAssets({
-                                spriteName: data.spriteName,
-                                states: monsterData.states,
-                                shadow: monsterData.shadow,
-                                height: monsterData.height,
-                            });
-                        })
-                        .catch((error) => {
-                            console.error(`[GameWorld] Failed to lazy-load monster assets for '${data.spriteName}' (id=${monsterId})`, error);
-                        });
-                }
-                console.log(`[GameWorld] Summoned ${data.spriteName} (ID: ${monsterId}) at (${movableLocation.x}, ${movableLocation.y}) with speed ${data.movementSpeed}, attack speed ${data.attackSpeed}, follow distance ${data.followDistance}, attack distance ${data.attackDistance}`);
-            } catch (error) {
-                console.error(
-                    `[GameWorld] Failed to summon monster '${data.spriteName}' (id=${monsterId})`,
-                    error,
-                );
+            const monster = this.spawnMonster({
+                x: movableLocation.x,
+                y: movableLocation.y,
+                spriteName: data.spriteName,
+                direction: data.direction,
+                hp: data.health,
+                attackDamage: data.damage,
+                movementSpeed: data.movementSpeed,
+                attackSpeed: data.attackSpeed,
+                followDistance: data.followDistance,
+                attackDistance: data.attackDistance,
+                attackType: data.attackType,
+                transparency: data.transparency,
+                chilledEffect: data.chilledEffect,
+                berserkedEffect: data.berserkedEffect,
+            });
+            if (monster) {
+                console.log(`[GameWorld] Summoned ${data.spriteName} (ID: ${monster.getMonsterId()}) at (${movableLocation.x}, ${movableLocation.y}) with speed ${data.movementSpeed}, attack speed ${data.attackSpeed}, follow distance ${data.followDistance}, attack distance ${data.attackDistance}`);
             }
         });
 
@@ -890,6 +868,158 @@ export class GameWorld extends Scene {
             this.npcs.push(npc);
             console.log(`[GameWorld] Summoned NPC ${data.spriteName} (ID: ${npcId}) at (${movableLocation.x}, ${movableLocation.y})`);
         });
+    }
+
+    /**
+     * Creates a monster at a cell and adds it to the world. Swaps in the real sprite once lazily loaded assets arrive.
+     *
+     * @returns The monster, or undefined when it could not be created
+     */
+    private spawnMonster(options: SpawnMonsterOptions): Monster | undefined {
+        const monsterData = MONSTERS.find(monster => monster.spriteName === options.spriteName);
+        if (!monsterData) {
+            console.warn(`[GameWorld] Cannot spawn monster: unknown sprite ${options.spriteName}`);
+            return undefined;
+        }
+
+        const monsterId = this.nextMonsterId++;
+        const concreteAssetsReady = !shouldLoadMonsterAssetsOnDemand() || areMonsterAssetsLoaded(this, options.spriteName);
+        const visualTemplate = concreteAssetsReady ? monsterData : getMonsterData(MONSTER_PLACEHOLDER_SPRITE);
+        if (!visualTemplate) {
+            console.warn(`[GameWorld] Cannot spawn monster: missing placeholder sprite '${MONSTER_PLACEHOLDER_SPRITE}'`);
+            return undefined;
+        }
+
+        try {
+            const monster = new Monster(this, {
+                x: options.x,
+                y: options.y,
+                spriteName: concreteAssetsReady ? options.spriteName : MONSTER_PLACEHOLDER_SPRITE,
+                displayName: monsterData.name,
+                direction: options.direction,
+                hp: options.hp,
+                maxHp: options.hp,
+                attackDamage: options.attackDamage,
+                soundManager: this.soundManager,
+                map: this.getCurrentMap(),
+                states: visualTemplate.states,
+                movementSpeed: options.movementSpeed,
+                attackSpeed: options.attackSpeed,
+                player: this.player,
+                playerIsDead: this.player?.getIsDead() ?? false,
+                followDistance: options.followDistance,
+                attackDistance: options.attackDistance,
+                attackType: options.attackType,
+                corpseDecayTime: visualTemplate.corpseDecayTime,
+                monsterId,
+                temporalCoefficient: visualTemplate.temporalCoefficient,
+                shadow: visualTemplate.shadow,
+                opacity: visualTemplate.opacity,
+                height: visualTemplate.height,
+                bowAttack: visualTemplate.bowAttack,
+                transparency: options.transparency,
+                chilledEffect: options.chilledEffect,
+                berserkedEffect: options.berserkedEffect,
+                wanderArea: options.wanderArea,
+                wanderRestMs: options.wanderRestMs,
+            });
+
+            this.monsters.push(monster);
+            if (!concreteAssetsReady) {
+                loadMonsterAssetsOnDemand(this, options.spriteName)
+                    .then(() => {
+                        const currentMonster = this.monsters.find((entry) => entry.getMonsterId() === monsterId);
+                        if (!currentMonster) {
+                            return;
+                        }
+                        currentMonster.applyLoadedMonsterAssets({
+                            spriteName: options.spriteName,
+                            states: monsterData.states,
+                            shadow: monsterData.shadow,
+                            height: monsterData.height,
+                        });
+                    })
+                    .catch((error) => {
+                        console.error(`[GameWorld] Failed to lazy-load monster assets for '${options.spriteName}' (id=${monsterId})`, error);
+                    });
+            }
+            return monster;
+        } catch (error) {
+            console.error(`[GameWorld] Failed to spawn monster '${options.spriteName}' (id=${monsterId})`, error);
+            return undefined;
+        }
+    }
+
+    /**
+     * Fills every spawn area of the current world. Runs after the player exists so no monster spawns on the player's cell.
+     */
+    private spawnWorldMonsters(): void {
+        const worldId = getGameStateManager(this.game).getWorldId();
+        const world = worldId === undefined ? undefined : getWorldData(worldId);
+        if (!world || world.dwellAreas.length === 0) {
+            return;
+        }
+
+        let spawned = 0;
+        for (const area of world.dwellAreas) {
+            for (let i = 0; i < area.count; i++) {
+                if (this.spawnDwellAreaMonster(area)) {
+                    spawned++;
+                }
+            }
+        }
+        console.log(`[GameWorld] Spawned ${spawned} monsters in ${world.dwellAreas.length} spawn areas of world '${world.id}'`);
+    }
+
+    /**
+     * Spawns one monster on a free cell of a spawn area using its catalog stats.
+     *
+     * @returns Whether a monster was spawned
+     */
+    private spawnDwellAreaMonster(area: DwellArea): boolean {
+        const stats = getMonsterStats(area.spriteName);
+        if (!stats) {
+            console.warn(`[GameWorld] Cannot fill spawn area: no stats for monster '${area.spriteName}'`);
+            return false;
+        }
+
+        const cell = findFreeCellInArea(this.getCurrentMap(), area);
+        if (!cell) {
+            console.warn(`[GameWorld] Cannot fill spawn area: no free cell for '${area.spriteName}' in (${area.x1},${area.y1})-(${area.x2},${area.y2})`);
+            return false;
+        }
+
+        const monster = this.spawnMonster({
+            x: cell.x,
+            y: cell.y,
+            spriteName: area.spriteName,
+            direction: Direction.South,
+            hp: stats.hp,
+            // Damage ranges are rolled per hit once monster combat is ported; until then use the midpoint
+            attackDamage: Math.round((stats.attackDamageMin + stats.attackDamageMax) / 2),
+            movementSpeed: movementSpeedMsToSlider(stats.movementSpeedMs),
+            attackSpeed: attackSpeedMsToSlider(stats.attackSpeedMs),
+            followDistance: stats.chaseDistance,
+            attackDistance: stats.attackRange,
+            attackType: stats.attackType,
+            wanderArea: area,
+            wanderRestMs: { min: stats.minIdleTimeMs, max: stats.maxIdleTimeMs },
+        });
+        if (!monster) {
+            return false;
+        }
+        this.dwellAreaByMonsterId.set(monster.getMonsterId(), area);
+        return true;
+    }
+
+    /**
+     * Pixel rectangle where idle monsters keep running AI: the camera view plus a margin so monsters
+     * just off screen are already moving when they scroll into view.
+     */
+    private getMonsterActiveBounds(): Phaser.Geom.Rectangle {
+        const view = this.cameras.main.worldView;
+        const margin = MONSTER_ACTIVE_MARGIN_CELLS * TILE_SIZE;
+        return new Phaser.Geom.Rectangle(view.x - margin, view.y - margin, view.width + margin * 2, view.height + margin * 2);
     }
 
     private setupNPCEventListeners(): void {
@@ -974,6 +1104,18 @@ export class GameWorld extends Scene {
                 // Destroy monster and remove from list
                 monster.destroy();
                 this.monsters.splice(monsterIndex, 1);
+
+                // Replace spawn-area monsters after their respawn delay
+                const dwellArea = this.dwellAreaByMonsterId.get(data.monsterId);
+                if (dwellArea) {
+                    this.dwellAreaByMonsterId.delete(data.monsterId);
+                    const stats = getMonsterStats(dwellArea.spriteName);
+                    if (stats) {
+                        this.time.delayedCall(stats.respawnTimeMs, () => {
+                            this.spawnDwellAreaMonster(dwellArea);
+                        });
+                    }
+                }
             }
         });
 
@@ -1399,6 +1541,8 @@ export class GameWorld extends Scene {
 
         // Update GameStateManager with initial player position
         gameStateManager.setWorldPos(playerWorldX, playerWorldY);
+
+        this.spawnWorldMonsters();
 
         // Apply saved movement speed from GameStateManager
         const savedMovementSpeed = gameStateManager.getMovementSpeed();

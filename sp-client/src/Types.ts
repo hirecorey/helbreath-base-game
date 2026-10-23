@@ -111,6 +111,16 @@ export enum AttackType {
     InterruptKnockback = 2,
 }
 
+/**
+ * Who a monster fights. Hostile monsters attack the player and friendly monsters; friendly monsters attack
+ * hostile monsters; neutral monsters only fight back after being hit.
+ */
+export enum MonsterAllegiance {
+    Hostile = 0,
+    Neutral = 1,
+    Friendly = 2,
+}
+
 /** Human-readable labels for AttackType. */
 export const ATTACK_TYPE_LABELS: Record<AttackType, string> = {
     [AttackType.NoInterrupt]: 'No Interrupt',

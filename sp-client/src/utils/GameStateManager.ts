@@ -19,6 +19,7 @@ import {
 import { DEFAULT_PLAYER_ATTACK_SPEED, DEFAULT_PLAYER_ATTACK_RANGE } from '../Config';
 import { AttackType, Gender, SkinColor } from '../Types';
 import { ItemTypes, type InventoryItem, type EquipmentSlot } from '../constants/Items';
+import { resolveWorldForMap } from '../constants/Worlds';
 
 /**
  * Represents the saved game state structure stored in localStorage.
@@ -30,6 +31,8 @@ interface GameStateStorage {
     worldPosY: number;
     /** Map name the player is currently on */
     map: string;
+    /** World the player is currently in (several worlds can share one map) */
+    worldId?: string;
     /** Movement speed slider value (0-100) */
     movementSpeed: number;
     /** Attack speed slider value (1-100) */
@@ -77,6 +80,8 @@ export class GameStateManager {
     private worldPosY = -1;
     /** Map name the player is currently on */
     private map = 'aresden.amd';
+    /** World the player is currently in; undefined when no world uses the current map */
+    private worldId: string | undefined = undefined;
     /** Movement speed slider value (0-100) */
     private movementSpeed = 80;
     /** Attack speed slider value (1-100) */
@@ -144,6 +149,7 @@ export class GameStateManager {
                 this.worldPosX = gameState.worldPosX ?? this.worldPosX;
                 this.worldPosY = gameState.worldPosY ?? this.worldPosY;
                 this.map = gameState.map ?? this.map;
+                this.worldId = gameState.worldId;
                 // Validate ranges and use defaults if invalid
                 this.movementSpeed = (gameState.movementSpeed !== undefined && gameState.movementSpeed >= 0 && gameState.movementSpeed <= 100)
                     ? gameState.movementSpeed
@@ -219,6 +225,9 @@ export class GameStateManager {
             console.warn('[GameStateManager] Failed to load game state from localStorage:', error);
         }
 
+        // Keep the world consistent with the map (also covers saves made before worlds existed)
+        this.worldId = resolveWorldForMap(this.map, this.worldId)?.id;
+
         // Emit events to sync React layer state
         EventBus.emit(OUT_UI_SET_MOVEMENT_SPEED, this.movementSpeed);
         EventBus.emit(OUT_UI_SET_ATTACK_SPEED, this.attackSpeed);
@@ -246,6 +255,7 @@ export class GameStateManager {
                 worldPosX: this.worldPosX,
                 worldPosY: this.worldPosY,
                 map: this.map,
+                worldId: this.worldId,
                 movementSpeed: this.movementSpeed,
                 attackSpeed: this.attackSpeed,
                 attackRange: this.attackRange,
@@ -286,6 +296,14 @@ export class GameStateManager {
      */
     public setMap(map: string): void {
         this.map = map;
+        this.worldId = resolveWorldForMap(map, this.worldId)?.id;
+    }
+
+    /**
+     * Gets the id of the world the player is in, or undefined when no world uses the current map.
+     */
+    public getWorldId(): string | undefined {
+        return this.worldId;
     }
 
     /**

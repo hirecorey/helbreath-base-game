@@ -152,6 +152,22 @@ type MonsterConfig = {
 
     /** Estimated height of the monster in pixels. Used to position damage indicator above the monster. */
     height?: number;
+
+    /** When set, random wandering picks destinations only inside this rectangle (spawn-area monsters) */
+    wanderArea?: WanderArea;
+
+    /** When set, the monster rests for a random duration in this range after reaching each wander destination */
+    wanderRestMs?: { min: number; max: number };
+};
+
+/**
+ * Inclusive rectangle in world cells. Corners may be given in any order.
+ */
+export type WanderArea = {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
 };
 
 type LoadedMonsterAssetsConfig = {
@@ -247,6 +263,15 @@ export class Monster extends GameObject {
     /** Shadow mode for the currently active monster sprite. */
     private shadowOption: MonsterShadow;
 
+    /** Rectangle that random wandering stays inside (undefined = whole map) */
+    private wanderArea?: WanderArea;
+
+    /** Rest duration range after reaching a wander destination (undefined = no rest) */
+    private wanderRestMs?: { min: number; max: number };
+
+    /** Milliseconds left in the current wander rest */
+    private wanderRestRemainingMs = 0;
+
     /**
      * Creates a new Monster instance.
      * 
@@ -318,6 +343,8 @@ export class Monster extends GameObject {
         this.monsterId = config.monsterId;
         this.temporalCoefficient = config.temporalCoefficient ?? 1.0;
         this.height = config.height ?? getSpriteFrameHeight(scene, config.spriteName, 0, 0);
+        this.wanderArea = config.wanderArea;
+        this.wanderRestMs = config.wanderRestMs;
 
         // Disable auto-switch to Idle state - Monster AI will manage state transitions
         this.autoSwitchToIdle = false;
@@ -503,10 +530,15 @@ export class Monster extends GameObject {
      */
     private pickRandomMovableLocation(): { x: number; y: number } | undefined {
         const maxAttempts = 50;
-        
+        const area = this.wanderArea;
+        const minX = area ? Phaser.Math.Clamp(Math.min(area.x1, area.x2), 0, this.map.sizeX - 1) : 0;
+        const maxX = area ? Phaser.Math.Clamp(Math.max(area.x1, area.x2), 0, this.map.sizeX - 1) : this.map.sizeX - 1;
+        const minY = area ? Phaser.Math.Clamp(Math.min(area.y1, area.y2), 0, this.map.sizeY - 1) : 0;
+        const maxY = area ? Phaser.Math.Clamp(Math.max(area.y1, area.y2), 0, this.map.sizeY - 1) : this.map.sizeY - 1;
+
         for (let i = 0; i < maxAttempts; i++) {
-            const randomX = Phaser.Math.Between(0, this.map.sizeX - 1);
-            const randomY = Phaser.Math.Between(0, this.map.sizeY - 1);
+            const randomX = Phaser.Math.Between(minX, maxX);
+            const randomY = Phaser.Math.Between(minY, maxY);
             
             const tile = this.map.getTile(randomX, randomY);
             if (tile && tile.isMoveAllowed) {
@@ -759,6 +791,15 @@ export class Monster extends GameObject {
     }
 
     /**
+     * Whether the monster is idle with nothing in progress (not moving, attacking, reacting to damage, dying or dead),
+     * so skipping its update for a while changes nothing visible.
+     */
+    public isAtRest(): boolean {
+        return !this.isDead && !this.shouldKill && !this.isMoving && !this.isAttacking &&
+            this.currentState === MonsterState.Idle && !this.isStunlocked();
+    }
+
+    /**
      * Gets the monster's attack type.
      */
     public getAttackType(): AttackType {
@@ -828,6 +869,23 @@ export class Monster extends GameObject {
         }
         
         // Priority 3: Random wandering (if movement speed > 0)
+        // Rest between wander legs when configured
+        if (this.wanderRestRemainingMs > 0) {
+            if (this.currentState !== MonsterState.Idle) {
+                this.switchMonsterState(MonsterState.Idle);
+            }
+            return;
+        }
+        if (this.wanderRestMs && this.worldX === this.targetDestinationX && this.worldY === this.targetDestinationY) {
+            this.wanderRestRemainingMs = Phaser.Math.Between(this.wanderRestMs.min, this.wanderRestMs.max);
+            this.targetDestinationX = -1;
+            this.targetDestinationY = -1;
+            if (this.currentState !== MonsterState.Idle) {
+                this.switchMonsterState(MonsterState.Idle);
+            }
+            return;
+        }
+
         // Check if we have a target destination, if not or reached it, pick a new one
         if (this.targetDestinationX === -1 || this.targetDestinationY === -1 ||
             (this.worldX === this.targetDestinationX && this.worldY === this.targetDestinationY)) {
@@ -1290,6 +1348,7 @@ export class Monster extends GameObject {
         super.update(delta);
 
         this.updateStunlock(delta);
+        this.wanderRestRemainingMs = Math.max(0, this.wanderRestRemainingMs - delta);
         
         // After movement update, evaluate AI when not attacking and not moving
         // Note: We don't automatically switch to Idle state here - let AI manage state transitions

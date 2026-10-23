@@ -1,0 +1,73 @@
+# Porting Plan: Server Gameplay → Single-Player Client
+
+Goal: move the gameplay that today only exists in the C# multiplayer server (`multiplayer/server`) into the single-player browser client (`sp-client`), then delete `multiplayer/`.
+
+`multiplayer/` stays untouched until Phase 6 so it can be read and run side by side for comparison.
+
+## Background
+
+- `sp-client` is already purely single-player: one `Player`, no networking.
+- The server holds ~5,100 lines of gameplay rules (out of ~15,000; the rest is networking, threading, anti-cheat and visibility, which single-player does not need).
+- `sp-client` has no concept of a *world*, only maps. The server defines 63 worlds on 55 maps (`multiplayer/server/Config/GameWorlds.json`); spawns, teleports and NPCs attach to a world.
+- Monster stats (HP, damage range, speeds, chase distances, allegiance, respawn) live in `multiplayer/server/Config/Monsters.json`. In `sp-client` they came from the Summon dialog. The two catalogs are **not** in the same order (sp-client has 4 extra monsters), so they are joined on sprite name; all 63 server monsters match.
+- Busy maps spawn 340–420 monsters (Aresden 361, Elvine 340, Promiseland 420). `sp-client` updates every monster every frame today, so far-away monsters need to go dormant.
+- Monster-vs-monster only happens between *hostile* and *friendly* monsters. Every catalog monster is hostile by default, so in practice this means summoned allies.
+- Spells have no damage values; the server uses the caster's damage stat. The work is the hit shapes (square, cone, line, ground effects over time) timed to the visuals.
+- World data is thinner than the original game: 32 spawn areas across 3 cities, only 2 teleport links (Aresden ↔ Promiseland) and 2 NPC placements (blacksmith).
+
+## Phases
+
+| # | Phase | What gets built | Risk | Size | Status |
+|---|---|---|---|---|---|
+| 0 | Data foundation | `Worlds` catalog from `GameWorlds.json`; real monster stats in the monster catalog; game state remembers the current world, not just the map | Low | Small | Done |
+| 1 | Spawn areas | Worlds populate their spawn rectangles on load; dead monsters respawn on a timer; wander stays inside the rectangle; far-away monsters go dormant for performance; Summon dialog kept for testing | Medium | Medium | Done |
+| 2 | Monster AI | Monsters can target any entity (not only the player); chase / give-up distances, aggro on hit (neutral monsters only fight back), damage ranges, attack recovery, stun, knockback, friendly-vs-hostile fights | Medium-high | Large | Not started |
+| 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters cast | Medium | Medium-large | Not started |
+| 4 | Buffs and debuffs | Chill (−50% move/attack/cast, 10s), Berserk (+50%, 40s), Invisibility (40s) on player and monsters; one active effect per group; visuals from mp-client `GameAssetVisualEffect.ts` | Low-medium | Small-medium | Not started |
+| 5 | Teleports and NPCs | Stepping on a teleport cell moves to the target world/position; NPCs placed from world data | Low | Small | Not started |
+| 6 | Remove multiplayer | Tag the commit, delete `multiplayer/`, client-simulator/protobuf tooling, and multiplayer docs/launch configs | None | Removes ~75k lines, ~310 MB | Not started |
+
+Phases 3 and 4 depend on Phase 2 (generalized targeting). Phase 5 is independent and can be done any time after Phase 0.
+
+## Phase 0–1 notes
+
+What landed:
+
+- `sp-client/src/constants/Worlds.ts`: 63 worlds (map, music, spawn areas, teleports, NPC placements), generated from `GameWorlds.json`. Spawn areas and NPCs reference monsters/NPCs by sprite name.
+- `sp-client/src/constants/MonsterStats.ts`: gameplay stats for the 63 server monsters with server defaults filled in, joined to `Monsters.ts` on `spriteName`. Speeds are stored in milliseconds; `movementSpeedMsToSlider` / `attackSpeedMsToSlider` convert to the `Monster` slider scale.
+- `MonsterAllegiance` enum in `Types.ts`.
+- `GameStateManager` stores `worldId` and keeps it consistent with the map (`resolveWorldForMap`).
+- `GameWorld.spawnMonster` is shared by the Summon dialog and spawn areas. `spawnWorldMonsters` fills each area after the player is placed; corpses of spawn-area monsters are replaced after `respawnTimeMs`.
+- `Monster` accepts `wanderArea` (wander stays inside it) and `wanderRestMs` (random rest after each wander leg). Summoned monsters keep the old whole-map, no-rest wandering.
+- Idle monsters outside the camera view (plus a 6-cell margin) skip their update. Verified at ~96–100 fps with 361 monsters in Aresden.
+
+Verified in the browser: Aresden spawns 361 and Elvine 340 (matching the server), every monster inside its rectangle, no shared cells, wander + 3–5s rests inside a rectangle, respawn ~3s after corpse removal, Summon dialog unchanged.
+
+Deferred to Phase 2 (monster combat):
+
+- **Damage rolls:** spawn-area monsters use the midpoint of `attackDamageMin`–`attackDamageMax` per hit.
+- **Stun:** the server's Stun attack type has no sp-client equivalent yet; those monsters use Interrupt and carry `stunsTarget` / `attackStunDurationMs` for later.
+- **Attack speed:** converted assuming an 8-frame attack animation, so swing timing is approximate for monsters with other frame counts.
+- **Chase give-up distance, allegiance, attack recovery, monster spells:** stored in `MonsterStats` but not used yet.
+
+Data quirk kept as-is: Aresden places one Stone Golem (100–200 damage) in the town center next to the default spawn point.
+
+## Server source references
+
+| Feature | Server files |
+|---|---|
+| Spawn areas / respawn | `World/Game/GameWorld.cs` (`SpawnDwellAreaMonsters`, `TryFindFreeCellInDwell`, `TryRespawnDwellMonster`), `Config/GameWorlds.json`, `Config/Settings.json` (`monsterDefaults`) |
+| Monster AI | `World/Game/GameWorldMonster.cs`, `Helpers/MonsterChase.cs` |
+| Spell damage | `Helpers/Casting.cs`, `Helpers/Combat.cs`, `Utils/GroundStateTracker.cs`, `Config/Spells.json` |
+| Buffs / debuffs | `Helpers/TemporaryEffects.cs`, `temporaryEffects` in `Config/Spells.json` |
+| Teleports / NPCs | `World/Game/GameWorld.cs`, `Helpers/Spawn.cs`, `Helpers/Npc.cs`, `Config/NPCs.json` |
+
+## Verification
+
+`sp-client` has no automated tests. Each phase is checked by:
+
+- **Type checking:** `pnpm exec tsc --noEmit` in `sp-client`.
+- **Playing it:** a manual pass in the browser.
+- **Side by side:** comparing behavior against the local multiplayer server while it still exists.
+
+Phase 1 also gets a frame-rate check on the busiest map.

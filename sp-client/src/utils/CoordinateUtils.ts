@@ -260,6 +260,47 @@ export function getDirectionFromScreenSector(
 }
 
 /**
+ * Finds a free cell inside an inclusive rectangle: movable, not occupied by a game object and not a teleport cell.
+ * Tries random cells first so spawns spread out, then scans the rectangle row by row.
+ *
+ * @param map - The HBMap instance to check tiles against
+ * @param area - Inclusive rectangle in world cells; corners may be in any order and are clamped to the map
+ * @returns The free cell, or undefined when the rectangle has none
+ */
+export function findFreeCellInArea(
+    map: HBMap,
+    area: { x1: number; y1: number; x2: number; y2: number },
+): { x: number; y: number } | undefined {
+    const minX = Phaser.Math.Clamp(Math.min(area.x1, area.x2), 0, map.sizeX - 1);
+    const maxX = Phaser.Math.Clamp(Math.max(area.x1, area.x2), 0, map.sizeX - 1);
+    const minY = Phaser.Math.Clamp(Math.min(area.y1, area.y2), 0, map.sizeY - 1);
+    const maxY = Phaser.Math.Clamp(Math.max(area.y1, area.y2), 0, map.sizeY - 1);
+    const isFree = (x: number, y: number) => {
+        const tile = map.getTile(x, y);
+        return tile !== undefined && tile.isMoveAllowed && !tile.occupiedByGameObject && !tile.isTeleport;
+    };
+
+    const maxRandomAttempts = 400;
+    for (let attempt = 0; attempt < maxRandomAttempts; attempt++) {
+        const x = Phaser.Math.Between(minX, maxX);
+        const y = Phaser.Math.Between(minY, maxY);
+        if (isFree(x, y)) {
+            return { x, y };
+        }
+    }
+
+    for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+            if (isFree(x, y)) {
+                return { x, y };
+            }
+        }
+    }
+
+    return undefined;
+}
+
+/**
  * Finds the nearest movable location by spiraling outward from the initial position.
  * Checks tiles in expanding square patterns until a movable tile is found.
  * 
