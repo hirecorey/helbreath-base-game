@@ -143,6 +143,12 @@ export abstract class GameObject {
     /** Stunlock duration in ms. 0 disables stunlock. Set via constructor config. */
     protected stunlockDurationMs: number = 0;
 
+    /** Duration of the stunlock currently running (stunlockDurationMs, or longer when a stun was queued) */
+    private activeStunlockDurationMs = 0;
+
+    /** Longer stunlock requested by a stun hit; used by the next startStunlock() */
+    private queuedStunDurationMs = 0;
+
     /**
      * Creates a new GameObject instance.
      * 
@@ -577,14 +583,30 @@ export abstract class GameObject {
      * Returns true if stunlocked (cannot move, attack, or perform actions).
      */
     protected isStunlocked(): boolean {
-        return this.stunlockDurationMs > 0 && this.stunlockElapsedMs >= 0 && this.stunlockElapsedMs < this.stunlockDurationMs;
+        return this.activeStunlockDurationMs > 0 && this.stunlockElapsedMs >= 0 && this.stunlockElapsedMs < this.activeStunlockDurationMs;
     }
 
     /**
      * Starts the stunlock timer. Call when TakeDamageOnMove completes at a cell.
      */
     protected startStunlock(): void {
+        this.activeStunlockDurationMs = Math.max(this.stunlockDurationMs, this.queuedStunDurationMs);
+        this.queuedStunDurationMs = 0;
         this.stunlockElapsedMs = 0;
+    }
+
+    /**
+     * Makes the next stunlock (started after the take-damage animation) last at least `durationMs`.
+     */
+    protected queueStun(durationMs: number): void {
+        this.queuedStunDurationMs = Math.max(this.queuedStunDurationMs, durationMs);
+    }
+
+    /**
+     * Whether a stun hit is waiting for the next startStunlock().
+     */
+    protected hasQueuedStun(): boolean {
+        return this.queuedStunDurationMs > 0;
     }
 
     /**
@@ -626,7 +648,7 @@ export abstract class GameObject {
             return;
         }
         this.stunlockElapsedMs += delta;
-        if (this.stunlockElapsedMs >= this.stunlockDurationMs) {
+        if (this.stunlockElapsedMs >= this.activeStunlockDurationMs) {
             this.stunlockElapsedMs = -1;
             this.onStunlockComplete();
         }

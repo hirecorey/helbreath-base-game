@@ -30,7 +30,7 @@ import { prepareMapForGameWorld, shouldLoadMapAssetsOnDemand } from '../../utils
 import { collectEquippedItemAppearanceSpriteBasenamesForPrefetch, loadPlayerItemAppearanceOnDemand } from '../../utils/ItemAssets';
 import { SoundManager } from '../../utils/SoundManager';
 import { getMonsterData, MONSTERS } from '../../constants/Monsters';
-import { attackSpeedMsToSlider, getMonsterStats, movementSpeedMsToSlider } from '../../constants/MonsterStats';
+import { getMonsterStats, movementSpeedMsToSlider } from '../../constants/MonsterStats';
 import { getWorldData, type DwellArea } from '../../constants/Worlds';
 import { getNPCData } from '../../constants/NPCs';
 import { areMonsterAssetsLoaded, loadMonsterAssetsOnDemand, shouldLoadMonsterAssetsOnDemand } from '../../utils/MonsterAssets';
@@ -102,14 +102,20 @@ type SpawnMonsterOptions = {
     spriteName: string;
     direction: Direction;
     hp: number;
-    attackDamage: number;
+    attackDamageMin: number;
+    attackDamageMax: number;
     /** Movement speed slider value (0-100) */
     movementSpeed: number;
-    /** Attack speed slider value (1-100) */
-    attackSpeed: number;
+    /** Attack speed slider value (1-100); ignored when attackDurationMs is set */
+    attackSpeed?: number;
+    /** Full attack animation duration in milliseconds */
+    attackDurationMs?: number;
     followDistance: number;
     attackDistance: number;
     attackType: AttackType;
+    chaseMaxDistance?: number;
+    attackRecoveryMs?: number;
+    stunDurationMs?: number;
     transparency?: number;
     chilledEffect?: boolean;
     berserkedEffect?: boolean;
@@ -811,7 +817,8 @@ export class GameWorld extends Scene {
                 spriteName: data.spriteName,
                 direction: data.direction,
                 hp: data.health,
-                attackDamage: data.damage,
+                attackDamageMin: data.damage,
+                attackDamageMax: data.damage,
                 movementSpeed: data.movementSpeed,
                 attackSpeed: data.attackSpeed,
                 followDistance: data.followDistance,
@@ -899,17 +906,22 @@ export class GameWorld extends Scene {
                 direction: options.direction,
                 hp: options.hp,
                 maxHp: options.hp,
-                attackDamage: options.attackDamage,
+                attackDamageMin: options.attackDamageMin,
+                attackDamageMax: options.attackDamageMax,
                 soundManager: this.soundManager,
                 map: this.getCurrentMap(),
                 states: visualTemplate.states,
                 movementSpeed: options.movementSpeed,
                 attackSpeed: options.attackSpeed,
+                attackDurationMs: options.attackDurationMs,
                 player: this.player,
                 playerIsDead: this.player?.getIsDead() ?? false,
                 followDistance: options.followDistance,
                 attackDistance: options.attackDistance,
                 attackType: options.attackType,
+                chaseMaxDistance: options.chaseMaxDistance,
+                attackRecoveryMs: options.attackRecoveryMs,
+                stunDurationMs: options.stunDurationMs,
                 corpseDecayTime: visualTemplate.corpseDecayTime,
                 monsterId,
                 temporalCoefficient: visualTemplate.temporalCoefficient,
@@ -937,6 +949,10 @@ export class GameWorld extends Scene {
                             states: monsterData.states,
                             shadow: monsterData.shadow,
                             height: monsterData.height,
+                            temporalCoefficient: monsterData.temporalCoefficient,
+                            opacity: monsterData.opacity,
+                            corpseDecayTime: monsterData.corpseDecayTime,
+                            bowAttack: monsterData.bowAttack,
                         });
                     })
                     .catch((error) => {
@@ -995,13 +1011,16 @@ export class GameWorld extends Scene {
             spriteName: area.spriteName,
             direction: Direction.South,
             hp: stats.hp,
-            // Damage ranges are rolled per hit once monster combat is ported; until then use the midpoint
-            attackDamage: Math.round((stats.attackDamageMin + stats.attackDamageMax) / 2),
+            attackDamageMin: stats.attackDamageMin,
+            attackDamageMax: stats.attackDamageMax,
             movementSpeed: movementSpeedMsToSlider(stats.movementSpeedMs),
-            attackSpeed: attackSpeedMsToSlider(stats.attackSpeedMs),
+            attackDurationMs: stats.attackSpeedMs,
             followDistance: stats.chaseDistance,
             attackDistance: stats.attackRange,
             attackType: stats.attackType,
+            chaseMaxDistance: stats.chaseMaxDistance,
+            attackRecoveryMs: stats.attackRecoveryTimeMs,
+            stunDurationMs: stats.stunsTarget ? stats.attackStunDurationMs : 0,
             wanderArea: area,
             wanderRestMs: { min: stats.minIdleTimeMs, max: stats.maxIdleTimeMs },
         });
@@ -1077,11 +1096,11 @@ export class GameWorld extends Scene {
                             target: this.player,
                             speed: 1000,
                             onReachDestination: () => {
-                                this.player!.takeDamage(data.attackType, data.attackDamage, monster.getWorldX(), monster.getWorldY());
+                                this.player!.takeDamage(data.attackType, data.attackDamage, monster.getWorldX(), monster.getWorldY(), data.stunDurationMs);
                             },
                         });
                     } else {
-                        this.player.takeDamage(data.attackType, data.attackDamage, monster.getWorldX(), monster.getWorldY());
+                        this.player.takeDamage(data.attackType, data.attackDamage, monster.getWorldX(), monster.getWorldY(), data.stunDurationMs);
                     }
                 } else {
                     console.warn(`[GameWorld] Monster ${data.monsterId} not found for attack hit, skipping`);
@@ -1473,7 +1492,8 @@ export class GameWorld extends Scene {
                         maxHp: hoveredMonster.getMaxHp(),
                         overlayScreenX,
                         overlayScreenY,
-                        damage: hoveredMonster.getAttackDamage(),
+                        damageMin: hoveredMonster.getAttackDamageMin(),
+                        damageMax: hoveredMonster.getAttackDamageMax(),
                         movementSpeed: hoveredMonster.getMovementSpeed(),
                         attackSpeed: hoveredMonster.getAttackSpeed(),
                         attackType: hoveredMonster.getAttackType(),

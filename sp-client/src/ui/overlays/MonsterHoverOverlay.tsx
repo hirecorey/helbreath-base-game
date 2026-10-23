@@ -129,7 +129,7 @@ export function MonsterHoverOverlay() {
                     </div>
                     <div className="rpg-stat-item">
                         <span className="rpg-stat-label">Damage:</span>
-                        <span className="rpg-stat-value">{monsterInfo.damage}</span>
+                        <span className="rpg-stat-value">{monsterInfo.damageMin === monsterInfo.damageMax ? monsterInfo.damageMin : `${monsterInfo.damageMin}–${monsterInfo.damageMax}`}</span>
                     </div>
                     <div className="rpg-stat-item">
                         <span className="rpg-stat-label">Movement speed:</span>

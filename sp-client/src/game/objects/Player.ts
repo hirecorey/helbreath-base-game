@@ -718,8 +718,9 @@ export class Player extends GameObject {
      * @param damage - Damage amount to subtract from hp
      * @param attackerWorldX - Attacker's world X (used for InterruptKnockback knockback direction)
      * @param attackerWorldY - Attacker's world Y (used for InterruptKnockback knockback direction)
+     * @param stunDurationMs - When above 0 and attackType is Interrupt, the player stays stunned at least this long after the hit
      */
-    public takeDamage(attackType: AttackType, damage: number, attackerWorldX: number, attackerWorldY: number): void {
+    public takeDamage(attackType: AttackType, damage: number, attackerWorldX: number, attackerWorldY: number, stunDurationMs: number): void {
         if (this.isDead) {
             return;
         }
@@ -740,6 +741,9 @@ export class Player extends GameObject {
         }
 
         if (attackType === AttackType.Interrupt) {
+            if (stunDurationMs > 0) {
+                this.queueStun(stunDurationMs);
+            }
             this.applyInterruptDamage();
         }
     }
@@ -1267,6 +1271,10 @@ export class Player extends GameObject {
                 this.setPendingStunlockAfterMovement();
                 this.switchToMovement(true);
             } else {
+                // A stun hit keeps the player locked in place after the take damage animation
+                if (this.hasQueuedStun()) {
+                    this.startStunlock();
+                }
                 this.switchToIdle();
             }
         }

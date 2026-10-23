@@ -42,7 +42,7 @@ export interface MonsterStats {
     maxIdleTimeMs: number;
     /** How a hit affects the target */
     attackType: AttackType;
-    /** When true, a hit stuns the target for `attackStunDurationMs` (not applied yet; uses Interrupt until stun exists) */
+    /** When true, a hit (Interrupt) also stuns the player for `attackStunDurationMs` */
     stunsTarget: boolean;
     /** Stun duration in milliseconds when `stunsTarget` is true */
     attackStunDurationMs: number;
@@ -1466,10 +1466,3 @@ export function movementSpeedMsToSlider(movementSpeedMs: number): number {
     return Math.min(100, Math.max(0, (1000 - movementSpeedMs) / 8));
 }
 
-/**
- * Converts a full attack animation duration in milliseconds to the Monster attack speed slider value (1-100),
- * assuming an 8-frame attack animation (the slider maps to 5-30 frames per second).
- */
-export function attackSpeedMsToSlider(attackSpeedMs: number): number {
-    return Math.min(100, Math.max(1, ((8000 / attackSpeedMs - 5) / 25) * 100));
-}

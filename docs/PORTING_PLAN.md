@@ -11,7 +11,7 @@ Goal: move the gameplay that today only exists in the C# multiplayer server (`mu
 - `sp-client` has no concept of a *world*, only maps. The server defines 63 worlds on 55 maps (`multiplayer/server/Config/GameWorlds.json`); spawns, teleports and NPCs attach to a world.
 - Monster stats (HP, damage range, speeds, chase distances, allegiance, respawn) live in `multiplayer/server/Config/Monsters.json`. In `sp-client` they came from the Summon dialog. The two catalogs are **not** in the same order (sp-client has 4 extra monsters), so they are joined on sprite name; all 63 server monsters match.
 - Busy maps spawn 340–420 monsters (Aresden 361, Elvine 340, Promiseland 420). `sp-client` updates every monster every frame today, so far-away monsters need to go dormant.
-- Monster-vs-monster only happens between *hostile* and *friendly* monsters. Every catalog monster is hostile by default, so in practice this means summoned allies.
+- Monster-vs-monster only happens between *hostile* and *friendly* monsters. Every catalog monster is hostile by default, so in practice this means summoned allies. **Decision (scope):** the fork is a single-player game where monsters only ever fight the player, so monster-vs-monster, summoned allies and allegiance are out of scope.
 - Spells have no damage values; the server uses the caster's damage stat. The work is the hit shapes (square, cone, line, ground effects over time) timed to the visuals.
 - World data is thinner than the original game: 32 spawn areas across 3 cities, only 2 teleport links (Aresden ↔ Promiseland) and 2 NPC placements (blacksmith).
 
@@ -21,13 +21,15 @@ Goal: move the gameplay that today only exists in the C# multiplayer server (`mu
 |---|---|---|---|---|---|
 | 0 | Data foundation | `Worlds` catalog from `GameWorlds.json`; real monster stats in the monster catalog; game state remembers the current world, not just the map | Low | Small | Done |
 | 1 | Spawn areas | Worlds populate their spawn rectangles on load; dead monsters respawn on a timer; wander stays inside the rectangle; far-away monsters go dormant for performance; Summon dialog kept for testing | Medium | Medium | Done |
-| 2 | Monster AI | Monsters can target any entity (not only the player); chase / give-up distances, aggro on hit (neutral monsters only fight back), damage ranges, attack recovery, stun, knockback, friendly-vs-hostile fights | Medium-high | Large | Not started |
-| 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters cast | Medium | Medium-large | Not started |
+| 2 | Monster combat (slim) | Player-only targeting kept. Monsters fight back when hit from any range; chase continues to a give-up distance; damage rolls per hit; pause after landing a hit; Stun hits; attack timing from real animation frame counts | Low | Small-medium | Done |
+| 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters (Guard, Sorceress, and one more) cast at the player | Medium | Medium-large | Not started |
 | 4 | Buffs and debuffs | Chill (−50% move/attack/cast, 10s), Berserk (+50%, 40s), Invisibility (40s) on player and monsters; one active effect per group; visuals from mp-client `GameAssetVisualEffect.ts` | Low-medium | Small-medium | Not started |
 | 5 | Teleports and NPCs | Stepping on a teleport cell moves to the target world/position; NPCs placed from world data | Low | Small | Not started |
 | 6 | Remove multiplayer | Tag the commit, delete `multiplayer/`, client-simulator/protobuf tooling, and multiplayer docs/launch configs | None | Removes ~75k lines, ~310 MB | Not started |
 
-Phases 3 and 4 depend on Phase 2 (generalized targeting). Phase 5 is independent and can be done any time after Phase 0.
+With monster-vs-monster out of scope, no phase depends on generalized targeting: Phases 3, 4 and 5 can be done in any order after Phase 1. Phase 3 is most useful after Phase 2, so monsters hit by spells fight back.
+
+Dropped from the original Phase 2: generalized targeting (monsters attacking any entity), monster-vs-monster fights, summoned allies, and allegiance (hostile / neutral / friendly). `MonsterAllegiance` and the `allegiance` stat stay in the data but are unused.
 
 ## Phase 0–1 notes
 
@@ -48,9 +50,31 @@ Deferred to Phase 2 (monster combat):
 - **Damage rolls:** spawn-area monsters use the midpoint of `attackDamageMin`–`attackDamageMax` per hit.
 - **Stun:** the server's Stun attack type has no sp-client equivalent yet; those monsters use Interrupt and carry `stunsTarget` / `attackStunDurationMs` for later.
 - **Attack speed:** converted assuming an 8-frame attack animation, so swing timing is approximate for monsters with other frame counts.
-- **Chase give-up distance, allegiance, attack recovery, monster spells:** stored in `MonsterStats` but not used yet.
+- **Chase give-up distance, attack recovery:** stored in `MonsterStats` but not used yet.
+- **Monster spells:** moved to Phase 3. **Allegiance:** dropped (see Phases).
 
 Data quirk kept as-is: Aresden places one Stone Golem (100–200 damage) in the town center next to the default spawn point.
+
+## Phase 2 notes
+
+What landed (all in `sp-client`):
+
+- **Fight back:** any player hit starts a chase that only ends past `MONSTER_MAX_FOLLOW_DISTANCE` (20 cells) or when the player dies.
+- **Chase give-up:** a normal chase starts within `chaseDistance` and continues until the player is past `chaseMaxDistance`.
+- **Damage rolls:** each hit rolls `attackDamageMin`–`attackDamageMax`; the hover overlay shows the range.
+- **Attack recovery:** after each swing the monster idles for `attackRecoveryTimeMs`.
+- **Stun:** monsters with `stunsTarget` hit as Interrupt and queue a stunlock of `attackStunDurationMs` on the player (`GameObject.queueStun`).
+- **Attack timing:** spawn-area monsters pass `attackDurationMs`; the attack frame rate is fitted to the frames the sprite sheet actually plays, so a swing lasts exactly the server duration.
+- **Bug fix (Phase 1):** monsters spawned with the placeholder sprite now pick up `temporalCoefficient`, `opacity`, `corpseDecayTime` and `bowAttack` when their real assets load.
+
+Verified (game loop stepped from the page): fight-back from 12 cells, chase starts at 4 / gives up past 8 (Stone Golem), damage chase gives up past 20, hits every ~1,390 ms (700 ms swing + 700 ms recovery) for 100–200, stun locks the player ~500 ms / ~200 ms, Summon dialog unchanged.
+
+Known gaps:
+
+- Monsters attack whenever the player is inside `attackRange`, even before they start chasing (existing sp-client behavior). The Dark Elf (range 10, notices at 4) can shoot before it chases.
+- Monsters with `movementSpeedMs` 0 still never attack (existing sp-client behavior); no catalog monster uses 0.
+- Stun is only applied on Interrupt hits, not on knockback hits.
+- Summoned monsters (Summon dialog) keep slider-based attack speed and now also fight back when hit.
 
 ## Server source references
 

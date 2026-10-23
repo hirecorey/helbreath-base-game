@@ -8,7 +8,7 @@ import { ShadowManager } from '../../utils/ShadowManager';
 import type { SoundManager } from '../../utils/SoundManager';
 import type { MonsterStatesConfig, StateAnimationConfig } from '../../constants/Monsters';
 import { getSpriteFrameHeight } from '../../utils/SpriteUtils';
-import { MONSTER_CORPSE_FADE_ALPHA_STEP, MONSTER_DEFAULT_MOVEMENT_SPEED, MONSTER_DEFAULT_ATTACK_SPEED, DEFAULT_ANIMATION_FRAME_RATE, MONSTER_STUNLOCK_DURATION_MS } from '../../Config';
+import { MONSTER_CORPSE_FADE_ALPHA_STEP, MONSTER_DEFAULT_MOVEMENT_SPEED, MONSTER_DEFAULT_ATTACK_SPEED, DEFAULT_ANIMATION_FRAME_RATE, MONSTER_STUNLOCK_DURATION_MS, MONSTER_MAX_FOLLOW_DISTANCE } from '../../Config';
 import { calculateSpatialAudio } from '../../utils/SpatialAudioUtils';
 import type { Player } from './Player';
 import { EventBus } from '../EventBus';
@@ -100,6 +100,9 @@ type MonsterConfig = {
     
     /** Attack speed slider value (1-100) */
     attackSpeed?: number;
+
+    /** Full attack animation duration in milliseconds. Overrides `attackSpeed` when set. */
+    attackDurationMs?: number;
     
     /** Reference to the player for initial position setup */
     player?: Player;
@@ -109,6 +112,15 @@ type MonsterConfig = {
     
     /** Follow distance in cells (if player is within this distance, monster will follow) */
     followDistance?: number;
+
+    /** Once following, the monster gives up when the player gets farther than this many cells (defaults to followDistance) */
+    chaseMaxDistance?: number;
+
+    /** Idle time in milliseconds after each attack before the monster acts again (defaults to 0) */
+    attackRecoveryMs?: number;
+
+    /** When above 0, a hit stuns the player for this many milliseconds (defaults to 0) */
+    stunDurationMs?: number;
     
     /** Attack distance in cells (if player is within this distance, monster will attack) */
     attackDistance?: number;
@@ -120,8 +132,9 @@ type MonsterConfig = {
     hp?: number;
     maxHp?: number;
     
-    /** Attack damage (defaults to 30 if not specified) */
-    attackDamage?: number;
+    /** Inclusive damage range rolled on each hit */
+    attackDamageMin: number;
+    attackDamageMax: number;
     
     /** Time in seconds before corpse starts fading */
     corpseDecayTime: number;
@@ -175,6 +188,10 @@ type LoadedMonsterAssetsConfig = {
     states?: MonsterStatesConfig;
     shadow?: MonsterShadow;
     height?: number;
+    temporalCoefficient?: number;
+    opacity?: number;
+    corpseDecayTime: number;
+    bowAttack?: boolean;
 };
 
 /**
@@ -223,8 +240,33 @@ export class Monster extends GameObject {
     /** Attack type: how damage affects the target when monster hits player */
     private attackType: AttackType;
     
-    /** Attack damage dealt */
-    private attackDamage: number;
+    /** Inclusive damage range rolled on each hit */
+    private attackDamageMin: number;
+    private attackDamageMax: number;
+
+    /** Once following, give up when the player is farther than this many cells */
+    private chaseMaxDistance: number;
+
+    /** Whether the monster is currently following the player */
+    private isChasing = false;
+
+    /** True when the current chase was started by taking damage; such chases ignore chaseMaxDistance */
+    private isChaseFromDamage = false;
+
+    /** Idle time in milliseconds after each attack */
+    private attackRecoveryMs: number;
+
+    /** Milliseconds left in the current post-attack recovery */
+    private attackRecoveryRemainingMs = 0;
+
+    /** Player stun duration in milliseconds applied by each hit (0 = no stun) */
+    private stunDurationMs: number;
+
+    /** Full attack animation duration in milliseconds; when set, overrides the attack speed slider */
+    private attackDurationMs?: number;
+
+    /** Whether alpha came from an explicit transparency value (kept when real assets replace the placeholder) */
+    private hasTransparencyOverride: boolean;
 
     /** When true, spawn ArrowProjectile toward player instead of dealing damage immediately */
     private bowAttack: boolean;
@@ -308,7 +350,13 @@ export class Monster extends GameObject {
                 alpha,
                 onAnimationFrameChange: (relativeFrameIndex: number) => {
                     if (this.currentState === MonsterState.Attack && relativeFrameIndex === 2) {
-                        EventBus.emit(MONSTER_ATTACK_HIT_PLAYER, { monsterId: this.monsterId, attackType: this.attackType, attackDamage: this.attackDamage, bowAttack: this.bowAttack } satisfies MonsterAttackPlayerEvent);
+                        EventBus.emit(MONSTER_ATTACK_HIT_PLAYER, {
+                            monsterId: this.monsterId,
+                            attackType: this.attackType,
+                            attackDamage: Phaser.Math.Between(this.attackDamageMin, this.attackDamageMax),
+                            bowAttack: this.bowAttack,
+                            stunDurationMs: this.stunDurationMs,
+                        } satisfies MonsterAttackPlayerEvent);
                     }
                     if ((this.currentState === MonsterState.TakeDamage || this.currentState === MonsterState.TakeDamageOnMove || this.currentState === MonsterState.TakeDamageWithKnockback) && relativeFrameIndex === 4) {
                         const spatialConfig = this.calculateSpatialConfig();
@@ -337,7 +385,13 @@ export class Monster extends GameObject {
         this.followDistance = config.followDistance ?? 0;
         this.attackDistance = config.attackDistance ?? 0;
         this.attackType = config.attackType ?? AttackType.Interrupt;
-        this.attackDamage = config.attackDamage ?? 30;
+        this.attackDamageMin = config.attackDamageMin;
+        this.attackDamageMax = config.attackDamageMax;
+        this.chaseMaxDistance = config.chaseMaxDistance ?? this.followDistance;
+        this.attackRecoveryMs = config.attackRecoveryMs ?? 0;
+        this.stunDurationMs = config.stunDurationMs ?? 0;
+        this.attackDurationMs = config.attackDurationMs;
+        this.hasTransparencyOverride = config.transparency !== undefined;
         this.bowAttack = config.bowAttack ?? false;
         this.corpseDecayTime = config.corpseDecayTime;
         this.monsterId = config.monsterId;
@@ -361,7 +415,11 @@ export class Monster extends GameObject {
         EventBus.on(IN_UI_PLAYER_RESURRECT, this.onPlayerResurrect);
         
         // Calculate frame rate based on attack speed
-        this.attackSpeedFrameRate = 5 + (attackSpeed / 100) * (30 - 5);
+        // With attackDurationMs the attack frame rate is derived per animation (see getAnimationFrameRate);
+        // this value only feeds getAttackSpeed() for display
+        this.attackSpeedFrameRate = config.attackDurationMs !== undefined
+            ? 8000 / config.attackDurationMs
+            : 5 + (attackSpeed / 100) * (30 - 5);
         
         // Set movement speed for GameObject
         this.movementSpeed = movementSpeed;
@@ -423,6 +481,19 @@ export class Monster extends GameObject {
      * 
      * @returns Number of frames in attack animation
      */
+    /**
+     * Number of frames the animation for a state actually plays in the current direction: the configured count for
+     * custom frame ranges, otherwise the frame count of the sprite sheet (which can differ from the default of 8).
+     */
+    private getPlayedFrameCount(state: MonsterState): number {
+        const animConfig = this.getStateAnimationConfig(state);
+        if (animConfig.startAnimationFrame > 0 || animConfig.animationFrames !== 8) {
+            return animConfig.animationFrames;
+        }
+        const animation = this.scene.anims.get(`sprite-${animConfig.spriteName}-${animConfig.startSpriteSheet + this.direction}`);
+        return animation ? animation.frames.length : animConfig.animationFrames;
+    }
+
     private getAttackFrameCount(): number {
         const config = this.getStateAnimationConfig(MonsterState.Attack);
         return config.animationFrames;
@@ -602,7 +673,7 @@ export class Monster extends GameObject {
             const spatialConfig = this.calculateSpatialConfig();
             const attackFrameCount = this.getAttackFrameCount();
             const effectiveAttackFrameRate = this.attackSpeedFrameRate * this.temporalCoefficient;
-            const attackAnimationDuration = calculateAnimationDuration(attackFrameCount, effectiveAttackFrameRate);
+            const attackAnimationDuration = this.attackDurationMs ?? calculateAnimationDuration(attackFrameCount, effectiveAttackFrameRate);
             this.soundTracker.playOnce(attackSound, attackAnimationDuration, spatialConfig, MonsterState.Attack);
         }
     }
@@ -696,6 +767,13 @@ export class Monster extends GameObject {
         }
 
         this.acceptDamage(damage);
+
+        // Fight back: any hit from the player starts a chase that ignores chaseMaxDistance
+        if (!this.isPlayerDead) {
+            this.isChasing = true;
+            this.isChaseFromDamage = true;
+        }
+
         if (attackType === AttackType.NoInterrupt) {
             return;
         }
@@ -755,10 +833,17 @@ export class Monster extends GameObject {
     }
 
     /**
-     * Gets the monster's attack damage.
+     * Gets the lower bound of the monster's damage roll.
      */
-    public getAttackDamage(): number {
-        return this.attackDamage;
+    public getAttackDamageMin(): number {
+        return this.attackDamageMin;
+    }
+
+    /**
+     * Gets the upper bound of the monster's damage roll.
+     */
+    public getAttackDamageMax(): number {
+        return this.attackDamageMax;
     }
 
     /**
@@ -773,7 +858,7 @@ export class Monster extends GameObject {
      * Derived from attackSpeedFrameRate: 5 + (attackSpeed/100)*25.
      */
     public getAttackSpeed(): number {
-        return Math.round(((this.attackSpeedFrameRate - 5) / 25) * 100);
+        return Phaser.Math.Clamp(Math.round(((this.attackSpeedFrameRate - 5) / 25) * 100), 1, 100);
     }
 
     /**
@@ -816,6 +901,14 @@ export class Monster extends GameObject {
         this.states = config.states;
         this.shadowOption = config.shadow ?? MonsterShadow.BodyShadow;
         this.height = config.height ?? getSpriteFrameHeight(this.scene, config.spriteName, 0, 0);
+        this.temporalCoefficient = config.temporalCoefficient ?? 1.0;
+        this.corpseDecayTime = config.corpseDecayTime;
+        this.bowAttack = config.bowAttack ?? false;
+        if (!this.hasTransparencyOverride) {
+            for (const asset of this.assets) {
+                asset.setAlpha(config.opacity ?? 1.0);
+            }
+        }
 
         this.movementFrameCount = this.getMovementFrameCount();
         const movementDurationSeconds = this.movementSpeedDurationMs / 1000;
@@ -842,6 +935,14 @@ export class Monster extends GameObject {
             return;
         }
 
+        // Pause after each attack
+        if (this.attackRecoveryRemainingMs > 0) {
+            if (this.currentState !== MonsterState.Idle) {
+                this.switchMonsterState(MonsterState.Idle);
+            }
+            return;
+        }
+
         // If movement speed is 0, monster should remain idle at all times
         if (this.movementSpeed === 0) {
             // Switch to Idle if not already
@@ -857,15 +958,21 @@ export class Monster extends GameObject {
             return;
         }
         
-        // Priority 2: Check if player is in follow range (and player is alive)
-        if (this.followDistance > 0 && !this.isPlayerDead) {
-            const distanceToPlayer = this.getDistanceToPlayer();
-            
-            if (distanceToPlayer <= this.followDistance) {
-                // Move one cell towards player using stored coordinates
-                this.moveOneStepTowards(this.playerX, this.playerY);
-                return;
-            }
+        // Priority 2: Follow the player. A chase starts within followDistance and continues until the player is
+        // farther than chaseMaxDistance (MONSTER_MAX_FOLLOW_DISTANCE when the chase was started by taking damage)
+        const distanceToPlayer = this.getDistanceToPlayer();
+        const giveUpDistance = this.isChaseFromDamage ? MONSTER_MAX_FOLLOW_DISTANCE : this.chaseMaxDistance;
+        if (this.isChasing && (this.isPlayerDead || distanceToPlayer > giveUpDistance)) {
+            this.isChasing = false;
+            this.isChaseFromDamage = false;
+        }
+        if (!this.isChasing && !this.isPlayerDead && this.followDistance > 0 && distanceToPlayer <= this.followDistance) {
+            this.isChasing = true;
+        }
+        if (this.isChasing) {
+            // Move one cell towards player using stored coordinates
+            this.moveOneStepTowards(this.playerX, this.playerY);
+            return;
         }
         
         // Priority 3: Random wandering (if movement speed > 0)
@@ -1091,6 +1198,10 @@ export class Monster extends GameObject {
                 baseFrameRate = animConfig.animationFrames / movementDurationSeconds;
                 break;
             case MonsterState.Attack:
+                if (this.attackDurationMs !== undefined) {
+                    // Fit the frames that actually play into attackDurationMs (not scaled by temporalCoefficient)
+                    return this.getPlayedFrameCount(state) / (this.attackDurationMs / 1000);
+                }
                 // Adjust attack frame rate based on frame count ratio
                 // Standard attack has 8 frames, so scale proportionally
                 // E.g., 4 frames should play at half the speed to take the same time
@@ -1317,6 +1428,7 @@ export class Monster extends GameObject {
         if (this.isAttacking && !this.isPrimaryAssetAnimationPlaying()) {
             // Attack animation finished, return to idle state
             this.isAttacking = false;
+            this.attackRecoveryRemainingMs = this.attackRecoveryMs;
             this.switchMonsterState(MonsterState.Idle);
         }
 
@@ -1349,6 +1461,7 @@ export class Monster extends GameObject {
 
         this.updateStunlock(delta);
         this.wanderRestRemainingMs = Math.max(0, this.wanderRestRemainingMs - delta);
+        this.attackRecoveryRemainingMs = Math.max(0, this.attackRecoveryRemainingMs - delta);
         
         // After movement update, evaluate AI when not attacking and not moving
         // Note: We don't automatically switch to Idle state here - let AI manage state transitions

@@ -30,7 +30,8 @@ export interface MonsterHoverInfo {
     maxHp: number;
     overlayScreenX: number;
     overlayScreenY: number;
-    damage: number;
+    damageMin: number;
+    damageMax: number;
     movementSpeed: number;
     attackSpeed: number;
     attackType: AttackType;
@@ -97,6 +98,8 @@ export interface MonsterAttackPlayerEvent {
     attackDamage: number;
     /** When true, spawn ArrowProjectile from monster toward player instead of dealing damage immediately */
     bowAttack?: boolean;
+    /** When above 0, the hit stuns the player for this many milliseconds */
+    stunDurationMs: number;
 }
 
 /**
