@@ -1,9 +1,21 @@
 import { AttackType, MonsterAllegiance } from '../Types';
+import {
+    SPELL_BLIZZARD_ID,
+    SPELL_BLOODY_SHOCK_WAVE_ID,
+    SPELL_EARTH_SHOCK_WAVE_ID,
+    SPELL_EARTHWORM_STRIKE_ID,
+    SPELL_FIRE_BALL_ID,
+    SPELL_LIGHTNING_BOLT_ID,
+    SPELL_MASS_LIGHTNING_STRIKE_ID,
+    SPELL_METEOR_STRIKE_ID,
+} from './Spells';
 
 /**
- * A spell a monster can cast, with the chance it is chosen when the monster attacks.
+ * A spell a monster can cast. While chasing the player, the monster rolls each entry's chance on every decision;
+ * one of the spells that pass is cast instead of moving or meleeing.
  */
 export interface MonsterSpellEntry {
+    /** Spell id from `Spells.ts` */
     spellId: number;
     /** 0-1 chance this spell is cast instead of a normal attack */
     castProbability: number;
@@ -761,7 +773,7 @@ export const MONSTER_STATS: MonsterStats[] = [
         attackStunDurationMs: 200,
         allegiance: MonsterAllegiance.Hostile,
         rangedAttack: false,
-        spells: [{ spellId: 6, castProbability: 0.5 }],
+        spells: [{ spellId: SPELL_LIGHTNING_BOLT_ID, castProbability: 0.5 }],
         respawnTimeMs: 3000,
     },
     {
@@ -959,7 +971,7 @@ export const MONSTER_STATS: MonsterStats[] = [
         attackStunDurationMs: 100,
         allegiance: MonsterAllegiance.Hostile,
         rangedAttack: false,
-        spells: [{ spellId: 1, castProbability: 0.2 }],
+        spells: [{ spellId: SPELL_FIRE_BALL_ID, castProbability: 0.2 }],
         respawnTimeMs: 3000,
     },
     {
@@ -1223,7 +1235,14 @@ export const MONSTER_STATS: MonsterStats[] = [
         attackStunDurationMs: 200,
         allegiance: MonsterAllegiance.Hostile,
         rangedAttack: false,
-        spells: [{ spellId: 14, castProbability: 1 }, { spellId: 16, castProbability: 1 }, { spellId: 19, castProbability: 1 }, { spellId: 20, castProbability: 1 }, { spellId: 21, castProbability: 1 }, { spellId: 22, castProbability: 1 }],
+        spells: [
+            { spellId: SPELL_EARTHWORM_STRIKE_ID, castProbability: 1 },
+            { spellId: SPELL_BLOODY_SHOCK_WAVE_ID, castProbability: 1 },
+            { spellId: SPELL_METEOR_STRIKE_ID, castProbability: 1 },
+            { spellId: SPELL_MASS_LIGHTNING_STRIKE_ID, castProbability: 1 },
+            { spellId: SPELL_BLIZZARD_ID, castProbability: 1 },
+            { spellId: SPELL_EARTH_SHOCK_WAVE_ID, castProbability: 1 },
+        ],
         respawnTimeMs: 3000,
     },
     {

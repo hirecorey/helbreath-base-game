@@ -960,6 +960,13 @@ export class Player extends GameObject {
     }
 
     /**
+     * Gets the damage dealt per attack. Spells deal the same amount.
+     */
+    public getDamage(): number {
+        return this.damage;
+    }
+
+    /**
      * Gets the current attack target (monster to pathfind towards when out of range).
      */
     public getAttackTarget(): Monster | undefined {

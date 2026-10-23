@@ -5,7 +5,7 @@ import { convertPixelPosToWorldPos } from './CoordinateUtils';
 import type { Effect } from '../game/effects/Effect';
 import type { SoundManager } from './SoundManager';
 import type { CameraManager } from './CameraManager';
-import type { PlayerConfirmSpellTargetEvent } from '../Types';
+import type { PlayerConfirmSpellTargetEvent, SpellVisualTarget } from '../Types';
 import {
     IN_UI_CAST_EFFECT,
     IN_UI_KILL_ALL_EFFECTS,
@@ -71,6 +71,8 @@ export interface CastManagerConfig {
     soundManager: SoundManager;
     cameraManager: CameraManager | undefined;
     getPlayerWorldPos: () => { x: number; y: number } | undefined;
+    /** Called after the player confirms a spell target and its visuals start */
+    onPlayerSpellCast: (data: PlayerConfirmSpellTargetEvent) => void;
 }
 
 /**
@@ -82,6 +84,7 @@ export class CastManager {
     private soundManager: SoundManager;
     private cameraManager: CameraManager | undefined;
     private getPlayerWorldPos: () => { x: number; y: number } | undefined;
+    private onPlayerSpellCast: (data: PlayerConfirmSpellTargetEvent) => void;
 
     private pendingEffectKey: string | undefined = undefined;
     private pendingEffectInfiniteLoop = false;
@@ -97,6 +100,7 @@ export class CastManager {
         this.soundManager = config.soundManager;
         this.cameraManager = config.cameraManager;
         this.getPlayerWorldPos = config.getPlayerWorldPos;
+        this.onPlayerSpellCast = config.onPlayerSpellCast;
 
         this.boundCastEffect = (data: { effectKey: string; infiniteLoop: boolean }) => this.handleCastEffect(data);
         this.boundKillAllEffects = () => this.handleKillAllEffects();
@@ -217,6 +221,15 @@ export class CastManager {
     }
 
     private executeSpell(data: PlayerConfirmSpellTargetEvent): void {
+        this.playSpellVisual(data);
+        this.castReady = true;
+        this.onPlayerSpellCast(data);
+    }
+
+    /**
+     * Plays a spell's visuals and sounds from origin to target. Used for player casts and monster casts.
+     */
+    public playSpellVisual(data: SpellVisualTarget): void {
         const playerPos = this.getPlayerWorldPos();
         const onEffectCreated = this.getOnEffectCreated();
 
@@ -540,7 +553,6 @@ export class CastManager {
             default:
                 break;
         }
-        this.castReady = true;
     }
 
     private createBlizzardSpell(

@@ -113,6 +113,9 @@ export const ITEM_ADD_FROM_GROUND = 'item-add-from-ground';
 /** Emitted when monster attack animation hits frame 2 (player should take damage). */
 export const MONSTER_ATTACK_HIT_PLAYER = 'monster-attack-hit-player';
 
+/** Emitted when a monster starts casting a spell at the player. GameWorld plays the visual and applies damage. */
+export const MONSTER_CAST_SPELL = 'monster-cast-spell';
+
 /** Emitted when the player dies. Monsters use this to stop targeting and return to wandering. */
 export const PLAYER_DIED = 'player-died';
 

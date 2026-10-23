@@ -8,6 +8,20 @@ import type { Effect } from '../effects/Effect';
 /** Wall length: 2 tiles in each direction from center */
 const WALL_LENGTH = 2;
 
+/**
+ * World cells covered by a Fire Wall cast from origin toward target: the target cell plus
+ * WALL_LENGTH cells on each side along the cast direction offset. Shared by the visual and spell damage.
+ */
+export function getFireWallCells(originWorldX: number, originWorldY: number, targetWorldX: number, targetWorldY: number): [number, number][] {
+    const [rx, ry] = getDirectionOffset(getNextDirection(originWorldX, originWorldY, targetWorldX, targetWorldY));
+    const tiles: [number, number][] = [[targetWorldX, targetWorldY]];
+    for (let i = 1; i <= WALL_LENGTH; i++) {
+        tiles.push([targetWorldX + i * rx, targetWorldY + i * ry]);
+        tiles.push([targetWorldX - i * rx, targetWorldY - i * ry]);
+    }
+    return tiles;
+}
+
 export type FireWallConfig = {
     /** Duration in milliseconds each fire instance lasts (default: 30000) */
     duration?: number;
@@ -36,26 +50,12 @@ export class FireWall {
         targetPixelY: number,
         config: FireWallConfig
     ) {
-        const originWorldX = convertPixelPosToWorldPos(originPixelX);
-        const originWorldY = convertPixelPosToWorldPos(originPixelY);
-        const targetWorldX = convertPixelPosToWorldPos(targetPixelX);
-        const targetWorldY = convertPixelPosToWorldPos(targetPixelY);
-
-        const direction = getNextDirection(
-            originWorldX,
-            originWorldY,
-            targetWorldX,
-            targetWorldY
+        const tiles = getFireWallCells(
+            convertPixelPosToWorldPos(originPixelX),
+            convertPixelPosToWorldPos(originPixelY),
+            convertPixelPosToWorldPos(targetPixelX),
+            convertPixelPosToWorldPos(targetPixelY),
         );
-        const [rx, ry] = getDirectionOffset(direction);
-
-
-        // Create fire instances: center + (1..WALL_LENGTH) in each direction
-        const tiles: [number, number][] = [[targetWorldX, targetWorldY]];
-        for (let i = 1; i <= WALL_LENGTH; i++) {
-            tiles.push([targetWorldX + i * rx, targetWorldY + i * ry]);
-            tiles.push([targetWorldX - i * rx, targetWorldY - i * ry]);
-        }
 
         for (const [wx, wy] of tiles) {
             const pixelX = convertWorldPosToPixelPos(wx) + TILE_SIZE / 2;

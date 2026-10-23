@@ -89,6 +89,29 @@ export interface PlayerConfirmSpellTargetEvent {
 }
 
 /**
+ * Spell and pixel positions for playing a spell's visuals (player or monster cast).
+ */
+export type SpellVisualTarget = PlayerConfirmSpellTargetEvent;
+
+/**
+ * Event payload when a monster starts casting a spell at the player. Emitted from Monster to GameWorld.
+ */
+export interface MonsterCastSpellEvent {
+    monsterId: number;
+    spellId: number;
+    /** Monster cell at cast time */
+    casterWorldX: number;
+    casterWorldY: number;
+    /** Player cell at cast time */
+    targetWorldX: number;
+    targetWorldY: number;
+    /** Damage rolled from the monster's damage range */
+    damage: number;
+    /** Stun applied to the player by stunning spells, in milliseconds */
+    stunDurationMs: number;
+}
+
+/**
  * Event payload when a monster's attack hits the player.
  */
 export interface MonsterAttackPlayerEvent {

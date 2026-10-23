@@ -22,7 +22,7 @@ Goal: move the gameplay that today only exists in the C# multiplayer server (`mu
 | 0 | Data foundation | `Worlds` catalog from `GameWorlds.json`; real monster stats in the monster catalog; game state remembers the current world, not just the map | Low | Small | Done |
 | 1 | Spawn areas | Worlds populate their spawn rectangles on load; dead monsters respawn on a timer; wander stays inside the rectangle; far-away monsters go dormant for performance; Summon dialog kept for testing | Medium | Medium | Done |
 | 2 | Monster combat (slim) | Player-only targeting kept. Monsters fight back when hit from any range; chase continues to a give-up distance; damage rolls per hit; pause after landing a hit; Stun hits; attack timing from real animation frame counts | Low | Small-medium | Done |
-| 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters (Guard, Sorceress, and one more) cast at the player | Medium | Medium-large | Not started |
+| 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters (Orc, Guard, Sorceress) cast at the player | Medium | Medium-large | Done |
 | 4 | Buffs and debuffs | Chill (−50% move/attack/cast, 10s), Berserk (+50%, 40s), Invisibility (40s) on player and monsters; one active effect per group; visuals from mp-client `GameAssetVisualEffect.ts` | Low-medium | Small-medium | Not started |
 | 5 | Teleports and NPCs | Stepping on a teleport cell moves to the target world/position; NPCs placed from world data | Low | Small | Not started |
 | 6 | Remove multiplayer | Tag the commit, delete `multiplayer/`, client-simulator/protobuf tooling, and multiplayer docs/launch configs | None | Removes ~75k lines, ~310 MB | Not started |
@@ -75,6 +75,26 @@ Known gaps:
 - Monsters with `movementSpeedMs` 0 still never attack (existing sp-client behavior); no catalog monster uses 0.
 - Stun is only applied on Interrupt hits, not on knockback hits.
 - Summoned monsters (Summon dialog) keep slider-based attack speed and now also fight back when hit.
+
+## Phase 3 notes
+
+What landed (all in `sp-client`):
+
+- `constants/SpellDamage.ts`: damage rules for all 24 sp-client spells, keyed by sp-client spell id (the server numbers spells differently and calls Fire Wall "Fire Field"). Shapes: area (square around target), cone (Blizzard), line (shock waves), ground effect.
+- `utils/SpellDamageManager.ts`: picks targets when the spell is cast and damages them after the server's delay (projectile travel time, fixed drop distance, 200 ms for cones, half the duration for lines). Ground effects tick every second (Fire Wall, Poison Cloud, Ice Storm) or damage whoever steps on (Spike Field); one effect per group per cell; 30 s duration.
+- Spells deal the caster's damage: the player's damage stat, or the monster's rolled attack damage.
+- `CastManager.playSpellVisual` plays spell visuals for player and monster casts; `onPlayerSpellCast` hands player casts to the damage manager.
+- Monster spellcasting: while chasing, a caster rolls each spell's chance on every decision before trying melee (player within 16×9 cells). The cast plays the attack pose without a melee hit. Orc: Fire Ball 20%; Guard: Lightning Bolt 50%; Sorceress: Earthworm Strike, Bloody Shock Wave, Meteor Strike, Mass Lightning Strike, Blizzard, Earth Shock Wave (100% each). Summoned monsters get their type's spells too.
+
+Verified in the browser with training dummies: every shape hits exactly the predicted cells, timings match (Fire Ball ~121 ms, Ice Strike ~334 ms, Meteor 400 ms, cone/line ~200 ms, instant spells next frame), ground effects tick at 1 s, step-on damage fires once per entry, same-group effects don't stack, the caster is never hit by their own non-ground spell. Orc cast on ~25% of attacks, Guard ~56%, Sorceress every attack; all monster spells landed. No console errors.
+
+Differences from the server (deliberate):
+
+- **Fire Wall** damages the 5 tiles the sp-client visual draws (`getFireWallCells`, along the cast direction), not the server's 5×5 square.
+- **Monster spells only damage the player** (the server also splashes other monsters), per the single-player scope.
+- **Ground effects hurt their caster** if they stand in them, same as the server.
+- **On-hit chill** from Chill Wind, Ice Strike, Ice Storm, Blizzard, etc. comes with Phase 4.
+- Player-cast stunning spells (Blizzard) interrupt monsters but don't add a stun beyond the normal monster stunlock.
 
 ## Server source references
 

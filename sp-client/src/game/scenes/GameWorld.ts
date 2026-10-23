@@ -41,6 +41,7 @@ import {
     PLAYER_POSITION_CHANGED,
     MONSTER_DEAD,
     MONSTER_ATTACK_HIT_PLAYER,
+    MONSTER_CAST_SPELL,
     IN_UI_REQUEST_PLAYER_LOGOUT,
     IN_UI_PLAYER_RESURRECT,
     IN_UI_CAST_SPELL,
@@ -84,9 +85,11 @@ import {
     NATIVE_OVERLAY_MAP_LOADING_HIDDEN,
     NATIVE_OVERLAY_MAP_LOADING_SHOWN,
 } from '../../constants/EventNames';
-import { AttackType, CastSpellEvent, Gender, MonsterAttackPlayerEvent, MonsterHoverInfo, SummonMonsterEvent, SummonNPCEvent } from '../../Types';
+import { AttackType, CastSpellEvent, Gender, MonsterAttackPlayerEvent, MonsterCastSpellEvent, MonsterHoverInfo, SummonMonsterEvent, SummonNPCEvent } from '../../Types';
 import type { Effect } from '../../constants/Items';
 import { CastManager } from '../../utils/CastManager';
+import { SpellDamageManager } from '../../utils/SpellDamageManager';
+import type { MonsterSpellEntry } from '../../constants/MonsterStats';
 import { WeatherManager } from '../../utils/WeatherManager';
 import { mapDialogStore } from '../../ui/store/MapDialog.store';
 
@@ -116,6 +119,8 @@ type SpawnMonsterOptions = {
     chaseMaxDistance?: number;
     attackRecoveryMs?: number;
     stunDurationMs?: number;
+    spells?: MonsterSpellEntry[];
+    spellStunDurationMs?: number;
     transparency?: number;
     chilledEffect?: boolean;
     berserkedEffect?: boolean;
@@ -164,6 +169,8 @@ export class GameWorld extends Scene {
     private loadingMap = true;
     /** Cast manager - handles effects, spells, and cleanup */
     private castManager: CastManager | undefined = undefined;
+    /** Spell damage - delayed spell hits and ground effects */
+    private spellDamageManager: SpellDamageManager | undefined = undefined;
     /** Map that is currently displayed (for proper cleanup on shutdown - gameStateManager may already point to new map) */
     private displayedMap: HBMap | undefined = undefined;
     /** Ground items (dropped loot) - cleaned up in shutdown() */
@@ -246,6 +253,8 @@ export class GameWorld extends Scene {
             monster.update(delta);
         }
 
+        this.spellDamageManager?.update(delta);
+
         // Update weather (rain particles, sound)
         if (this.weatherManager && this.cameras?.main) {
             const cam = this.cameras.main;
@@ -258,6 +267,8 @@ export class GameWorld extends Scene {
         EventBus.emit(OUT_UI_HOVER_GROUND_ITEM_INFO, undefined);
         EventBus.emit(OUT_UI_HOVER_MONSTER, undefined);
         this.castManager?.destroy();
+        this.spellDamageManager?.destroy();
+        this.spellDamageManager = undefined;
         this.castManager = undefined;
         if (this.player?.hasPendingSpell()) {
             this.player.cancelPendingCast();
@@ -347,6 +358,7 @@ export class GameWorld extends Scene {
         EventBus.off(IN_UI_CHANGE_MAP);
         EventBus.off(PLAYER_POSITION_CHANGED);
         EventBus.off(MONSTER_ATTACK_HIT_PLAYER);
+        EventBus.off(MONSTER_CAST_SPELL);
         EventBus.off(MONSTER_DEAD);
         EventBus.off(NPC_DEAD);
         EventBus.off(ITEM_DROPPED_TO_GROUND);
@@ -827,6 +839,9 @@ export class GameWorld extends Scene {
                 transparency: data.transparency,
                 chilledEffect: data.chilledEffect,
                 berserkedEffect: data.berserkedEffect,
+                // Spellcasting is part of a monster type, so summons cast the same spells as spawned monsters
+                spells: getMonsterStats(data.spriteName)?.spells,
+                spellStunDurationMs: getMonsterStats(data.spriteName)?.attackStunDurationMs,
             });
             if (monster) {
                 console.log(`[GameWorld] Summoned ${data.spriteName} (ID: ${monster.getMonsterId()}) at (${movableLocation.x}, ${movableLocation.y}) with speed ${data.movementSpeed}, attack speed ${data.attackSpeed}, follow distance ${data.followDistance}, attack distance ${data.attackDistance}`);
@@ -922,6 +937,8 @@ export class GameWorld extends Scene {
                 chaseMaxDistance: options.chaseMaxDistance,
                 attackRecoveryMs: options.attackRecoveryMs,
                 stunDurationMs: options.stunDurationMs,
+                spells: options.spells,
+                spellStunDurationMs: options.spellStunDurationMs,
                 corpseDecayTime: visualTemplate.corpseDecayTime,
                 monsterId,
                 temporalCoefficient: visualTemplate.temporalCoefficient,
@@ -1021,6 +1038,8 @@ export class GameWorld extends Scene {
             chaseMaxDistance: stats.chaseMaxDistance,
             attackRecoveryMs: stats.attackRecoveryTimeMs,
             stunDurationMs: stats.stunsTarget ? stats.attackStunDurationMs : 0,
+            spells: stats.spells,
+            spellStunDurationMs: stats.attackStunDurationMs,
             wanderArea: area,
             wanderRestMs: { min: stats.minIdleTimeMs, max: stats.maxIdleTimeMs },
         });
@@ -1061,12 +1080,31 @@ export class GameWorld extends Scene {
     }
 
     private setupCastManager(): void {
+        this.spellDamageManager = new SpellDamageManager({
+            scene: this,
+            getMap: () => this.getCurrentMap(),
+            getPlayer: () => this.player,
+            getMonsters: () => this.monsters,
+        });
         this.castManager = new CastManager({
             scene: this,
             soundManager: this.soundManager,
             cameraManager: this.cameraManager,
             getPlayerWorldPos: () =>
                 this.player ? { x: this.player.getWorldX(), y: this.player.getWorldY() } : undefined,
+            onPlayerSpellCast: (data) => {
+                if (!this.player) {
+                    return;
+                }
+                this.spellDamageManager?.castPlayerSpell(
+                    data.spellId,
+                    this.player.getWorldX(),
+                    this.player.getWorldY(),
+                    convertPixelPosToWorldPos(data.targetPixelX),
+                    convertPixelPosToWorldPos(data.targetPixelY),
+                    this.player.getDamage(),
+                );
+            },
         });
         this.castManager.setupEventListeners();
     }
@@ -1106,6 +1144,29 @@ export class GameWorld extends Scene {
                     console.warn(`[GameWorld] Monster ${data.monsterId} not found for attack hit, skipping`);
                 }
             }
+        });
+
+        EventBus.on(MONSTER_CAST_SPELL, (data: MonsterCastSpellEvent) => {
+            const monster = this.monsters.find(m => m.getMonsterId() === data.monsterId);
+            if (!monster || !this.player) {
+                return;
+            }
+            this.castManager?.playSpellVisual({
+                spellId: data.spellId,
+                originPixelX: monster.getAnimatedPixelX(),
+                originPixelY: monster.getAnimatedPixelY(),
+                targetPixelX: this.player.getAnimatedPixelX(),
+                targetPixelY: this.player.getAnimatedPixelY(),
+            });
+            this.spellDamageManager?.castMonsterSpell(
+                data.spellId,
+                data.casterWorldX,
+                data.casterWorldY,
+                data.targetWorldX,
+                data.targetWorldY,
+                data.damage,
+                data.stunDurationMs,
+            );
         });
 
         // Listen for monster death events to remove them from the game

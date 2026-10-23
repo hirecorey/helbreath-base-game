@@ -12,9 +12,11 @@ import { MONSTER_CORPSE_FADE_ALPHA_STEP, MONSTER_DEFAULT_MOVEMENT_SPEED, MONSTER
 import { calculateSpatialAudio } from '../../utils/SpatialAudioUtils';
 import type { Player } from './Player';
 import { EventBus } from '../EventBus';
-import { MONSTER_DEAD, MONSTER_ATTACK_HIT_PLAYER, PLAYER_DIED, IN_UI_PLAYER_RESURRECT } from '../../constants/EventNames';
+import { MONSTER_DEAD, MONSTER_ATTACK_HIT_PLAYER, MONSTER_CAST_SPELL, PLAYER_DIED, IN_UI_PLAYER_RESURRECT } from '../../constants/EventNames';
+import type { MonsterSpellEntry } from '../../constants/MonsterStats';
+import { MONSTER_SPELL_RANGE_X, MONSTER_SPELL_RANGE_Y } from '../../constants/SpellDamage';
 import { TAKE_DAMAGE_BLADE } from '../../constants/SoundFileNames';
-import { AttackType, MonsterAttackPlayerEvent } from '../../Types';
+import { AttackType, MonsterAttackPlayerEvent, MonsterCastSpellEvent } from '../../Types';
 import { calculateAnimationDuration } from '../../utils/AnimationUtils';
 
 /**
@@ -121,6 +123,12 @@ type MonsterConfig = {
 
     /** When above 0, a hit stuns the player for this many milliseconds (defaults to 0) */
     stunDurationMs?: number;
+
+    /** Spells cast at the player while chasing (defaults to none) */
+    spells?: MonsterSpellEntry[];
+
+    /** Player stun duration for stunning spells, in milliseconds (defaults to 0) */
+    spellStunDurationMs?: number;
     
     /** Attack distance in cells (if player is within this distance, monster will attack) */
     attackDistance?: number;
@@ -262,6 +270,15 @@ export class Monster extends GameObject {
     /** Player stun duration in milliseconds applied by each hit (0 = no stun) */
     private stunDurationMs: number;
 
+    /** Spells cast at the player while chasing */
+    private spells: MonsterSpellEntry[];
+
+    /** Player stun duration for stunning spells, in milliseconds */
+    private spellStunDurationMs: number;
+
+    /** True while the current attack animation is a spell cast (no melee hit is dealt) */
+    private isCastingSpell = false;
+
     /** Full attack animation duration in milliseconds; when set, overrides the attack speed slider */
     private attackDurationMs?: number;
 
@@ -349,7 +366,7 @@ export class Monster extends GameObject {
                 // Apply opacity/transparency to the sprite
                 alpha,
                 onAnimationFrameChange: (relativeFrameIndex: number) => {
-                    if (this.currentState === MonsterState.Attack && relativeFrameIndex === 2) {
+                    if (this.currentState === MonsterState.Attack && relativeFrameIndex === 2 && !this.isCastingSpell) {
                         EventBus.emit(MONSTER_ATTACK_HIT_PLAYER, {
                             monsterId: this.monsterId,
                             attackType: this.attackType,
@@ -390,6 +407,8 @@ export class Monster extends GameObject {
         this.chaseMaxDistance = config.chaseMaxDistance ?? this.followDistance;
         this.attackRecoveryMs = config.attackRecoveryMs ?? 0;
         this.stunDurationMs = config.stunDurationMs ?? 0;
+        this.spells = config.spells ?? [];
+        this.spellStunDurationMs = config.spellStunDurationMs ?? 0;
         this.attackDurationMs = config.attackDurationMs;
         this.hasTransparencyOverride = config.transparency !== undefined;
         this.bowAttack = config.bowAttack ?? false;
@@ -646,10 +665,45 @@ export class Monster extends GameObject {
     }
     
     /**
+     * Rolls each configured spell's cast chance and, if any pass, casts one of them at the player:
+     * plays the attack pose and emits MONSTER_CAST_SPELL so GameWorld plays the visual and applies damage.
+     *
+     * @returns Whether a spell was cast
+     */
+    private tryCastSpell(): boolean {
+        if (this.spells.length === 0 || this.isPlayerDead ||
+            Math.abs(this.playerX - this.worldX) > MONSTER_SPELL_RANGE_X ||
+            Math.abs(this.playerY - this.worldY) > MONSTER_SPELL_RANGE_Y) {
+            return false;
+        }
+
+        const candidates = this.spells.filter(entry => Math.random() <= entry.castProbability);
+        if (candidates.length === 0) {
+            return false;
+        }
+
+        const spell = candidates[Phaser.Math.Between(0, candidates.length - 1)];
+        this.startAttack(true);
+        EventBus.emit(MONSTER_CAST_SPELL, {
+            monsterId: this.monsterId,
+            spellId: spell.spellId,
+            casterWorldX: this.worldX,
+            casterWorldY: this.worldY,
+            targetWorldX: this.playerX,
+            targetWorldY: this.playerY,
+            damage: Phaser.Math.Between(this.attackDamageMin, this.attackDamageMax),
+            stunDurationMs: this.spellStunDurationMs,
+        } satisfies MonsterCastSpellEvent);
+        return true;
+    }
+
+    /**
      * Initiates an attack animation towards the player.
      * Calculates direction to player and plays attack animation.
      */
-    private startAttack(): void {
+    private startAttack(castingSpell: boolean): void {
+        this.isCastingSpell = castingSpell;
+
         // Cancel any movement destination so monster doesn't continue moving after attack
         this.cancelMovement();
         
@@ -953,12 +1007,7 @@ export class Monster extends GameObject {
         }
         
         // Priority 1: Check if player is in attack range
-        if (this.shouldAttack()) {
-            this.startAttack();
-            return;
-        }
-        
-        // Priority 2: Follow the player. A chase starts within followDistance and continues until the player is
+        // Update the chase. A chase starts within followDistance and continues until the player is
         // farther than chaseMaxDistance (MONSTER_MAX_FOLLOW_DISTANCE when the chase was started by taking damage)
         const distanceToPlayer = this.getDistanceToPlayer();
         const giveUpDistance = this.isChaseFromDamage ? MONSTER_MAX_FOLLOW_DISTANCE : this.chaseMaxDistance;
@@ -969,13 +1018,26 @@ export class Monster extends GameObject {
         if (!this.isChasing && !this.isPlayerDead && this.followDistance > 0 && distanceToPlayer <= this.followDistance) {
             this.isChasing = true;
         }
+
+        // Priority 1: Cast a spell at the player while chasing
+        if (this.isChasing && this.tryCastSpell()) {
+            return;
+        }
+
+        // Priority 2: Check if player is in attack range
+        if (this.shouldAttack()) {
+            this.startAttack(false);
+            return;
+        }
+
+        // Priority 3: Follow the player
         if (this.isChasing) {
             // Move one cell towards player using stored coordinates
             this.moveOneStepTowards(this.playerX, this.playerY);
             return;
         }
         
-        // Priority 3: Random wandering (if movement speed > 0)
+        // Priority 4: Random wandering (if movement speed > 0)
         // Rest between wander legs when configured
         if (this.wanderRestRemainingMs > 0) {
             if (this.currentState !== MonsterState.Idle) {
