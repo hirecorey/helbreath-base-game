@@ -1238,6 +1238,7 @@ export class Monster extends GameObject {
             offsetY: this.offsetY,
             frameRate: this.getAnimationFrameRate(this.currentState),
         });
+        this.shadowManager.setVisible(!this.hiddenByFog);
         this.updateShadow();
         this.updateShadowDepth();
     }

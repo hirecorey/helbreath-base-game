@@ -439,6 +439,13 @@ export class ShadowManager {
     }
 
     /**
+     * Shows or hides the shadow sprite.
+     */
+    public setVisible(visible: boolean): void {
+        this.shadowSprite?.setVisible(visible);
+    }
+
+    /**
      * Destroys the shadow sprite and cleans up resources.
      */
     public destroy(): void {

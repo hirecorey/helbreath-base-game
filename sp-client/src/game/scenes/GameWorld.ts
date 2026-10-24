@@ -20,6 +20,7 @@ import {
     MAP_OBJECT_COLLISION_RADIUS_CELLS,
     MONSTER_HOVER_OVERLAY_ANCHOR_OFFSET_Y,
     MONSTER_PLACEHOLDER_SPRITE,
+    VISIBILITY_ENABLED,
 } from '../../Config';
 import { InputManager } from '../../utils/InputManager';
 import { CameraManager } from '../../utils/CameraManager';
@@ -90,6 +91,7 @@ import { AttackType, CastSpellEvent, Gender, MonsterAttackPlayerEvent, MonsterCa
 import type { Effect } from '../../constants/Items';
 import { CastManager } from '../../utils/CastManager';
 import { SpellDamageManager } from '../../utils/SpellDamageManager';
+import { VisibilityManager } from '../../utils/VisibilityManager';
 import { TemporaryEffectType } from '../../constants/TemporaryEffects';
 import type { MonsterSpellEntry } from '../../constants/MonsterStats';
 import { WeatherManager } from '../../utils/WeatherManager';
@@ -175,6 +177,8 @@ export class GameWorld extends Scene {
     private castManager: CastManager | undefined = undefined;
     /** Spell damage - delayed spell hits and ground effects */
     private spellDamageManager: SpellDamageManager | undefined = undefined;
+    /** Limited visibility fog around the player (undefined when VISIBILITY_ENABLED is false) */
+    private visibilityManager: VisibilityManager | undefined = undefined;
     /** Map that is currently displayed (for proper cleanup on shutdown - gameStateManager may already point to new map) */
     private displayedMap: HBMap | undefined = undefined;
     /** Ground items (dropped loot) - cleaned up in shutdown() */
@@ -247,10 +251,26 @@ export class GameWorld extends Scene {
             this.handleMapObjectCollisions();
         }
 
+        if (this.visibilityManager && this.player) {
+            this.visibilityManager.setCenter(this.player.getAnimatedPixelX(), this.player.getAnimatedPixelY());
+            for (const npc of this.npcs) {
+                npc.setHiddenByFog(!this.isVisibleToPlayer(npc.getAnimatedPixelX(), npc.getAnimatedPixelY()));
+            }
+            for (const groundItem of this.groundItems) {
+                groundItem.setVisible(this.isVisibleToPlayer(
+                    convertWorldPosToPixelPos(groundItem.worldX) + TILE_SIZE / 2,
+                    convertWorldPosToPixelPos(groundItem.worldY) + TILE_SIZE / 2,
+                ));
+            }
+        }
+
         // Update monsters. Idle monsters well outside the camera view are skipped: with hundreds of spawn-area
         // monsters per map, only the ones the player can see (or that are busy) need to run AI.
         const activeBounds = this.getMonsterActiveBounds();
         for (const monster of this.monsters) {
+            if (this.visibilityManager) {
+                monster.setHiddenByFog(!this.isVisibleToPlayer(monster.getAnimatedPixelX(), monster.getAnimatedPixelY()));
+            }
             if (monster.isAtRest() &&
                 !activeBounds.contains(convertWorldPosToPixelPos(monster.getWorldX()), convertWorldPosToPixelPos(monster.getWorldY()))) {
                 continue;
@@ -274,6 +294,8 @@ export class GameWorld extends Scene {
         this.castManager?.destroy();
         this.spellDamageManager?.destroy();
         this.spellDamageManager = undefined;
+        this.visibilityManager?.destroy();
+        this.visibilityManager = undefined;
         this.castManager = undefined;
         if (this.player?.hasPendingSpell()) {
             this.player.cancelPendingCast();
@@ -559,9 +581,10 @@ export class GameWorld extends Scene {
         const worldPixelX = pointer.x + camera.scrollX;
         const worldPixelY = pointer.y + camera.scrollY;
 
-        // Invisible monsters are hidden and cannot be targeted
+        // Invisible monsters and monsters outside the visibility radius are hidden and cannot be targeted
         const candidates = getObjectsNearPixel(
-            this.monsters.filter(monster => !monster.isInvisible()),
+            this.monsters.filter(monster => !monster.isInvisible() &&
+                this.isVisibleToPlayer(monster.getAnimatedPixelX(), monster.getAnimatedPixelY())),
             (m) => ({ x: m.getAnimatedPixelX(), y: m.getAnimatedPixelY() }),
             worldPixelX,
             worldPixelY,
@@ -608,8 +631,12 @@ export class GameWorld extends Scene {
         const cellX = convertPixelPosToWorldPos(worldPixelX);
         const cellY = convertPixelPosToWorldPos(worldPixelY);
 
+        // Items outside the visibility radius are hidden and cannot be picked
         const candidates = getObjectsAtWorldCell(
-            this.groundItems,
+            this.groundItems.filter(item => this.isVisibleToPlayer(
+                convertWorldPosToPixelPos(item.worldX) + TILE_SIZE / 2,
+                convertWorldPosToPixelPos(item.worldY) + TILE_SIZE / 2,
+            )),
             (g) => ({ worldX: g.worldX, worldY: g.worldY }),
             cellX,
             cellY
@@ -878,6 +905,13 @@ export class GameWorld extends Scene {
                 console.log(`[GameWorld] Summoned NPC ${data.spriteName} at (${movableLocation.x}, ${movableLocation.y})`);
             }
         });
+    }
+
+    /**
+     * Whether a pixel position is within the player's visibility radius (always true when limited visibility is off).
+     */
+    private isVisibleToPlayer(pixelX: number, pixelY: number): boolean {
+        return !this.visibilityManager || this.visibilityManager.isVisibleAt(pixelX, pixelY);
     }
 
     /**
@@ -1700,6 +1734,11 @@ export class GameWorld extends Scene {
 
         this.spawnWorldNpcs();
         this.spawnWorldMonsters();
+
+        if (VISIBILITY_ENABLED) {
+            this.visibilityManager = new VisibilityManager(this);
+            this.visibilityManager.setCenter(this.player.getAnimatedPixelX(), this.player.getAnimatedPixelY());
+        }
 
         // Apply saved movement speed from GameStateManager
         const savedMovementSpeed = gameStateManager.getMovementSpeed();

@@ -135,6 +135,9 @@ export abstract class GameObject {
     /** Maximum hit points. Defaults to 100. */
     protected maxHp: number = 100;
 
+    /** Whether the object is hidden because it is outside the player's visibility radius */
+    protected hiddenByFog = false;
+
     /** Active buffs and debuffs with their scene-clock expiry time */
     private temporaryEffects = new Map<TemporaryEffectType, { spec: TemporaryEffectSpec; expiresAt: number }>();
 
@@ -1105,6 +1108,21 @@ export abstract class GameObject {
         this.temporaryEffects.set(spec.type, { spec, expiresAt: this.scene.time.now + spec.durationMs });
         this.onTemporaryEffectsChanged();
         return true;
+    }
+
+    /**
+     * Hides or shows the object's sprites and shadow because it is outside / inside the player's visibility radius.
+     * Separate from alpha, which Invisibility and corpse fading use.
+     */
+    public setHiddenByFog(hidden: boolean): void {
+        if (hidden === this.hiddenByFog) {
+            return;
+        }
+        this.hiddenByFog = hidden;
+        for (const asset of this.assets) {
+            asset.setVisible(!hidden);
+        }
+        this.shadowManager?.setVisible(!hidden);
     }
 
     /** Removes a buff or debuff if active */

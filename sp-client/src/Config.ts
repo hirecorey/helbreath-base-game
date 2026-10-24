@@ -180,6 +180,11 @@ export const DEPTH_MULTIPLIER = 100;
 export const HIGH_DEPTH = 5000000;
 
 /**
+ * Depth for the limited-visibility fog: above world objects and effects (HIGH_DEPTH), below loading overlays.
+ */
+export const VISIBILITY_FOG_DEPTH = 9000000;
+
+/**
  * Depth for loading overlay (covers screen during map load).
  */
 export const LOADING_OVERLAY_DEPTH = 10000000;
@@ -245,3 +250,15 @@ export const SPRITES_WITH_SHADOWS: readonly string[] = [
  * When false, assets are loaded individually from public/assets.
  */
 export const ENABLE_ZIP_LOADING = false;
+
+/**
+ * Limited visibility: the player only sees VISIBILITY_RADIUS_TILES around their character. Beyond that the world is
+ * covered by dark fog and monsters, NPCs and ground items are hidden.
+ */
+export const VISIBILITY_ENABLED = true;
+
+/** Radius in tiles (circular) at which the fog becomes fully dark and entities are hidden */
+export const VISIBILITY_RADIUS_TILES = 12;
+
+/** Width in tiles of the soft edge, inside the radius, over which visibility fades to dark */
+export const VISIBILITY_FEATHER_TILES = 3;
