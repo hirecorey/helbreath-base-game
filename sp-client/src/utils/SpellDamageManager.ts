@@ -5,6 +5,7 @@ import type { Player } from '../game/objects/Player';
 import { getFireWallCells } from '../game/spells/FireWall';
 import { CONE_SPELL_DAMAGE_DELAY_MS, SPELL_DAMAGE, SpellDamageShape, type SpellDamageConfig } from '../constants/SpellDamage';
 import { SPELL_FIRE_WALL_ID } from '../constants/Spells';
+import { SPELL_TEMPORARY_EFFECTS } from '../constants/TemporaryEffects';
 import { TILE_SIZE } from '../game/assets/HBMap';
 import { AttackType } from '../Types';
 import { getDistance } from './CoordinateUtils';
@@ -76,9 +77,52 @@ export class SpellDamageManager {
             !monster.getIsDead() && cells.has(this.getCellIndex(monster.getWorldX(), monster.getWorldY())));
         this.deliverAfter(this.getDamageDelayMs(spell, casterX, casterY, targetX, targetY), () => {
             for (const monster of targets) {
+                if (monster.getIsDead()) {
+                    continue;
+                }
                 monster.takeDamage(damage, spell.attackType);
+                this.applySpellEffectsOnHit(spellId, monster);
             }
         });
+    }
+
+    /**
+     * Applies a buff-only spell (Invisibility, Berserk) to whoever stands on the target cell: the player first, otherwise a monster.
+     *
+     * @returns Whether anyone received the effects
+     */
+    public castBuffSpell(spellId: number, targetX: number, targetY: number): boolean {
+        const effects = SPELL_TEMPORARY_EFFECTS[spellId];
+        if (!effects) {
+            console.warn(`[SpellDamageManager] No effects for buff spell ${spellId}`);
+            return false;
+        }
+        const player = this.getPlayer();
+        const target = player && !player.getIsDead() && player.getWorldX() === targetX && player.getWorldY() === targetY
+            ? player
+            : this.getMonsters().find(monster => !monster.getIsDead() && monster.getWorldX() === targetX && monster.getWorldY() === targetY);
+        if (!target) {
+            return false;
+        }
+        for (const effect of effects) {
+            target.applyTemporaryEffect(effect);
+        }
+        return true;
+    }
+
+    /** Whether a spell only applies effects and deals no damage */
+    public isBuffSpell(spellId: number): boolean {
+        return SPELL_DAMAGE[spellId] === undefined && SPELL_TEMPORARY_EFFECTS[spellId] !== undefined;
+    }
+
+    /** Applies a damage spell's on-hit effects (e.g. Chill) to a target that survived the hit */
+    private applySpellEffectsOnHit(spellId: number, target: Player | Monster): void {
+        if (target.getIsDead()) {
+            return;
+        }
+        for (const effect of SPELL_TEMPORARY_EFFECTS[spellId] ?? []) {
+            target.applyTemporaryEffect(effect);
+        }
     }
 
     /**
@@ -110,7 +154,11 @@ export class SpellDamageManager {
             return;
         }
         this.deliverAfter(this.getDamageDelayMs(spell, casterX, casterY, targetX, targetY), () => {
+            if (player.getIsDead()) {
+                return;
+            }
             player.takeDamage(spell.attackType, damage, casterX, casterY, spell.stuns ? stunDurationMs : 0);
+            this.applySpellEffectsOnHit(spellId, player);
         });
     }
 
@@ -350,6 +398,7 @@ export class SpellDamageManager {
         } else {
             entity.takeDamage(effect.attackType, effect.damage, effect.x, effect.y, 0);
         }
+        this.applySpellEffectsOnHit(effect.spellId, entity);
     }
 
     /** Damages entities that moved onto a cell with step-only effects since the last update */

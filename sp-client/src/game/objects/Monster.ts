@@ -12,11 +12,12 @@ import { MONSTER_CORPSE_FADE_ALPHA_STEP, MONSTER_DEFAULT_MOVEMENT_SPEED, MONSTER
 import { calculateSpatialAudio } from '../../utils/SpatialAudioUtils';
 import type { Player } from './Player';
 import { EventBus } from '../EventBus';
-import { MONSTER_DEAD, MONSTER_ATTACK_HIT_PLAYER, MONSTER_CAST_SPELL, PLAYER_DIED, IN_UI_PLAYER_RESURRECT } from '../../constants/EventNames';
+import { MONSTER_DEAD, MONSTER_ATTACK_HIT_PLAYER, MONSTER_CAST_SPELL, PLAYER_DIED, PLAYER_INVISIBILITY_CHANGED, IN_UI_PLAYER_RESURRECT } from '../../constants/EventNames';
+import { TemporaryEffectType } from '../../constants/TemporaryEffects';
 import type { MonsterSpellEntry } from '../../constants/MonsterStats';
 import { MONSTER_SPELL_RANGE_X, MONSTER_SPELL_RANGE_Y } from '../../constants/SpellDamage';
 import { TAKE_DAMAGE_BLADE } from '../../constants/SoundFileNames';
-import { AttackType, MonsterAttackPlayerEvent, MonsterCastSpellEvent } from '../../Types';
+import { AttackType, MonsterAttackPlayerEvent, MonsterCastSpellEvent, type PlayerInvisibilityChangedEvent } from '../../Types';
 import { calculateAnimationDuration } from '../../utils/AnimationUtils';
 
 /**
@@ -279,6 +280,19 @@ export class Monster extends GameObject {
     /** True while the current attack animation is a spell cast (no melee hit is dealt) */
     private isCastingSpell = false;
 
+    /** Whether the player is invisible (updated via PLAYER_INVISIBILITY_CHANGED); invisible players are ignored */
+    private isPlayerInvisible = false;
+
+    /** Step duration from the monster's movement speed, before buffs/debuffs */
+    private baseMovementSpeedDurationMs = 0;
+
+    /** Sprite alpha without Invisibility (catalog opacity or transparency override) */
+    private baseAlpha = 1;
+
+    /** Chill tint / berserk overlay requested at spawn (Summon dialog); buff visuals are layered on top */
+    private spawnChilledEffect: boolean;
+    private spawnBerserkEffect: boolean;
+
     /** Full attack animation duration in milliseconds; when set, overrides the attack speed slider */
     private attackDurationMs?: number;
 
@@ -409,6 +423,9 @@ export class Monster extends GameObject {
         this.stunDurationMs = config.stunDurationMs ?? 0;
         this.spells = config.spells ?? [];
         this.spellStunDurationMs = config.spellStunDurationMs ?? 0;
+        this.baseAlpha = alpha;
+        this.spawnChilledEffect = config.chilledEffect ?? false;
+        this.spawnBerserkEffect = config.berserkedEffect ?? false;
         this.attackDurationMs = config.attackDurationMs;
         this.hasTransparencyOverride = config.transparency !== undefined;
         this.bowAttack = config.bowAttack ?? false;
@@ -431,6 +448,7 @@ export class Monster extends GameObject {
         this.isPlayerDead = config.playerIsDead ?? false;
 
         EventBus.on(PLAYER_DIED, this.onPlayerDied);
+        EventBus.on(PLAYER_INVISIBILITY_CHANGED, this.onPlayerInvisibilityChanged);
         EventBus.on(IN_UI_PLAYER_RESURRECT, this.onPlayerResurrect);
         
         // Calculate frame rate based on attack speed
@@ -443,6 +461,7 @@ export class Monster extends GameObject {
         // Set movement speed for GameObject
         this.movementSpeed = movementSpeed;
         this.movementSpeedDurationMs = 1000 - (movementSpeed / 100) * (1000 - 200); // 200ms (min/slow) to 1000ms (max/fast)
+        this.baseMovementSpeedDurationMs = this.movementSpeedDurationMs;
         
         // Determine movement frame count from config (this will use getStateAnimationConfig)
         this.movementFrameCount = this.getMovementFrameCount();
@@ -656,7 +675,8 @@ export class Monster extends GameObject {
     private shouldAttack(): boolean {
         if (this.attackDistance === 0 ||
             this.isAttacking ||
-            this.isPlayerDead) {
+            this.isPlayerDead ||
+            this.isPlayerInvisible) {
             return false;
         }
         
@@ -671,7 +691,7 @@ export class Monster extends GameObject {
      * @returns Whether a spell was cast
      */
     private tryCastSpell(): boolean {
-        if (this.spells.length === 0 || this.isPlayerDead ||
+        if (this.spells.length === 0 || this.isPlayerDead || this.isPlayerInvisible ||
             Math.abs(this.playerX - this.worldX) > MONSTER_SPELL_RANGE_X ||
             Math.abs(this.playerY - this.worldY) > MONSTER_SPELL_RANGE_Y) {
             return false;
@@ -703,6 +723,7 @@ export class Monster extends GameObject {
      */
     private startAttack(castingSpell: boolean): void {
         this.isCastingSpell = castingSpell;
+        this.removeTemporaryEffect(TemporaryEffectType.Invisibility);
 
         // Cancel any movement destination so monster doesn't continue moving after attack
         this.cancelMovement();
@@ -727,7 +748,9 @@ export class Monster extends GameObject {
             const spatialConfig = this.calculateSpatialConfig();
             const attackFrameCount = this.getAttackFrameCount();
             const effectiveAttackFrameRate = this.attackSpeedFrameRate * this.temporalCoefficient;
-            const attackAnimationDuration = this.attackDurationMs ?? calculateAnimationDuration(attackFrameCount, effectiveAttackFrameRate);
+            const attackAnimationDuration = this.attackDurationMs !== undefined
+                ? this.attackDurationMs / this.getTemporaryEffectSpeedFactor('attack')
+                : calculateAnimationDuration(attackFrameCount, effectiveAttackFrameRate * this.getTemporaryEffectSpeedFactor('attack'));
             this.soundTracker.playOnce(attackSound, attackAnimationDuration, spatialConfig, MonsterState.Attack);
         }
     }
@@ -746,6 +769,7 @@ export class Monster extends GameObject {
      * sets GameObject to Idle and Monster to Dead state.
      */
     private startDeathAnimation(): void {
+        this.clearTemporaryEffects();
         // Free the occupied cell immediately when kill cycle starts
         this.markCurrentTileFree();
         
@@ -823,7 +847,7 @@ export class Monster extends GameObject {
         this.acceptDamage(damage);
 
         // Fight back: any hit from the player starts a chase that ignores chaseMaxDistance
-        if (!this.isPlayerDead) {
+        if (!this.isPlayerDead && !this.isPlayerInvisible) {
             this.isChasing = true;
             this.isChaseFromDamage = true;
         }
@@ -959,9 +983,7 @@ export class Monster extends GameObject {
         this.corpseDecayTime = config.corpseDecayTime;
         this.bowAttack = config.bowAttack ?? false;
         if (!this.hasTransparencyOverride) {
-            for (const asset of this.assets) {
-                asset.setAlpha(config.opacity ?? 1.0);
-            }
+            this.baseAlpha = config.opacity ?? 1.0;
         }
 
         this.movementFrameCount = this.getMovementFrameCount();
@@ -974,6 +996,34 @@ export class Monster extends GameObject {
 
         this.recreateShadowForCurrentSprite();
         this.switchMonsterState(this.currentState, true);
+        this.applyTemporaryEffectVisuals();
+    }
+
+    /** Whether this monster has Invisibility (hidden and cannot be targeted) */
+    public isInvisible(): boolean {
+        return this.hasTemporaryEffect(TemporaryEffectType.Invisibility);
+    }
+
+    /**
+     * Recomputes movement speed and visuals from active buffs/debuffs. Attack speed is applied in getAnimationFrameRate.
+     */
+    protected override onTemporaryEffectsChanged(): void {
+        this.movementSpeedDurationMs = this.baseMovementSpeedDurationMs / this.getTemporaryEffectSpeedFactor('movement');
+        this.movementFrameRate = this.movementFrameCount / (this.movementSpeedDurationMs / 1000);
+        this.applyTemporaryEffectVisuals();
+    }
+
+    /** Invisible: fully hidden. Chill / Berserk: tint and overlay, on top of the spawn-time visuals. */
+    private applyTemporaryEffectVisuals(): void {
+        const invisible = this.isInvisible();
+        const chilled = this.spawnChilledEffect || this.hasTemporaryEffect(TemporaryEffectType.Chill);
+        const berserk = this.spawnBerserkEffect || this.hasTemporaryEffect(TemporaryEffectType.Berserk);
+        for (const asset of this.assets) {
+            asset.setAlpha(invisible ? 0 : this.baseAlpha);
+            asset.setChilledTint(chilled);
+            asset.setBerserkOverlay(berserk);
+        }
+        this.shadowManager?.setAlpha(invisible ? 0 : 1);
     }
     
     /**
@@ -1011,11 +1061,11 @@ export class Monster extends GameObject {
         // farther than chaseMaxDistance (MONSTER_MAX_FOLLOW_DISTANCE when the chase was started by taking damage)
         const distanceToPlayer = this.getDistanceToPlayer();
         const giveUpDistance = this.isChaseFromDamage ? MONSTER_MAX_FOLLOW_DISTANCE : this.chaseMaxDistance;
-        if (this.isChasing && (this.isPlayerDead || distanceToPlayer > giveUpDistance)) {
+        if (this.isChasing && (this.isPlayerDead || this.isPlayerInvisible || distanceToPlayer > giveUpDistance)) {
             this.isChasing = false;
             this.isChaseFromDamage = false;
         }
-        if (!this.isChasing && !this.isPlayerDead && this.followDistance > 0 && distanceToPlayer <= this.followDistance) {
+        if (!this.isChasing && !this.isPlayerDead && !this.isPlayerInvisible && this.followDistance > 0 && distanceToPlayer <= this.followDistance) {
             this.isChasing = true;
         }
 
@@ -1262,12 +1312,12 @@ export class Monster extends GameObject {
             case MonsterState.Attack:
                 if (this.attackDurationMs !== undefined) {
                     // Fit the frames that actually play into attackDurationMs (not scaled by temporalCoefficient)
-                    return this.getPlayedFrameCount(state) / (this.attackDurationMs / 1000);
+                    return this.getPlayedFrameCount(state) / (this.attackDurationMs / 1000) * this.getTemporaryEffectSpeedFactor('attack');
                 }
                 // Adjust attack frame rate based on frame count ratio
                 // Standard attack has 8 frames, so scale proportionally
                 // E.g., 4 frames should play at half the speed to take the same time
-                baseFrameRate = this.attackSpeedFrameRate * (animConfig.animationFrames / 8);
+                baseFrameRate = this.attackSpeedFrameRate * (animConfig.animationFrames / 8) * this.getTemporaryEffectSpeedFactor('attack');
                 break;
             case MonsterState.TakeDamage:
             case MonsterState.TakeDamageOnMove:
@@ -1541,6 +1591,13 @@ export class Monster extends GameObject {
     };
 
     /**
+     * Event handler for PLAYER_INVISIBILITY_CHANGED. Invisible players are not chased or attacked.
+     */
+    private onPlayerInvisibilityChanged = (data: PlayerInvisibilityChangedEvent): void => {
+        this.isPlayerInvisible = data.invisible;
+    };
+
+    /**
      * Event handler for IN_UI_PLAYER_RESURRECT. Updates monster's awareness that player is alive again.
      */
     private onPlayerResurrect = (): void => {
@@ -1552,6 +1609,7 @@ export class Monster extends GameObject {
      */
     public destroy(): void {
         EventBus.off(PLAYER_DIED, this.onPlayerDied);
+        EventBus.off(PLAYER_INVISIBILITY_CHANGED, this.onPlayerInvisibilityChanged);
         EventBus.off(IN_UI_PLAYER_RESURRECT, this.onPlayerResurrect);
         super.destroy();
     }

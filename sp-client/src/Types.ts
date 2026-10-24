@@ -94,6 +94,13 @@ export interface PlayerConfirmSpellTargetEvent {
 export type SpellVisualTarget = PlayerConfirmSpellTargetEvent;
 
 /**
+ * Event payload when the player gains or loses Invisibility. Emitted from Player.
+ */
+export interface PlayerInvisibilityChangedEvent {
+    invisible: boolean;
+}
+
+/**
  * Event payload when a monster starts casting a spell at the player. Emitted from Monster to GameWorld.
  */
 export interface MonsterCastSpellEvent {

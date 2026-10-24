@@ -119,6 +119,9 @@ export const MONSTER_CAST_SPELL = 'monster-cast-spell';
 /** Emitted when the player dies. Monsters use this to stop targeting and return to wandering. */
 export const PLAYER_DIED = 'player-died';
 
+/** Emitted when the player gains or loses Invisibility. Payload: PlayerInvisibilityChangedEvent. Monsters stop targeting an invisible player. */
+export const PLAYER_INVISIBILITY_CHANGED = 'player-invisibility-changed';
+
 /** Emitted when a Phaser scene is ready. React uses this to receive the current scene instance. */
 export const CURRENT_SCENE_READY = 'current-scene-ready';
 

@@ -60,8 +60,10 @@ import {
     SPELL_EARTHWORM_STRIKE_ID,
     SPELL_ARMOR_BREAK_ID,
     SPELL_BLOODY_SHOCK_WAVE_ID,
+    SPELL_INVISIBILITY_ID,
+    SPELL_BERSERK_ID,
 } from '../constants/Spells';
-import { EFFECT_ICE_STRIKE_LARGE_SHARD } from '../constants/Effects';
+import { EFFECT_BERSERK, EFFECT_ICE_STRIKE_LARGE_SHARD, EFFECT_INVISIBILITY } from '../constants/Effects';
 import type { BlizzardConfig } from '../game/spells/Blizzard';
 import type { BlizzardShardConfig } from '../game/spells/BlizzardShard';
 import type { IceStrikeShardConfig } from '../game/spells/IceStrikeShard';
@@ -548,6 +550,21 @@ export class CastManager {
                     data.targetPixelX,
                     data.targetPixelY,
                     data.spellId
+                );
+                break;
+            case SPELL_INVISIBILITY_ID:
+            case SPELL_BERSERK_ID:
+                drawEffect(
+                    this.scene,
+                    convertPixelPosToWorldPos(data.targetPixelX),
+                    convertPixelPosToWorldPos(data.targetPixelY),
+                    data.spellId === SPELL_INVISIBILITY_ID ? EFFECT_INVISIBILITY : EFFECT_BERSERK,
+                    {
+                        soundManager: this.soundManager,
+                        playerWorldX: playerPos?.x,
+                        playerWorldY: playerPos?.y,
+                        infiniteLoop: false,
+                    }
                 );
                 break;
             default:

@@ -33,6 +33,8 @@ export const SPELL_MASS_LIGHTNING_STRIKE_ID = 21;
 export const SPELL_BLIZZARD_ID = 22;
 export const SPELL_EARTH_SHOCK_WAVE_ID = 23;
 export const SPELL_MASS_BLIZZARD_ID = 24;
+export const SPELL_INVISIBILITY_ID = 25;
+export const SPELL_BERSERK_ID = 26;
 
 export const SPELLS: SpellConfig[] = [
     {
@@ -130,6 +132,14 @@ export const SPELLS: SpellConfig[] = [
     {
         id: SPELL_MASS_BLIZZARD_ID,
         name: 'Mass Blizzard',
+    },
+    {
+        id: SPELL_INVISIBILITY_ID,
+        name: 'Invisibility',
+    },
+    {
+        id: SPELL_BERSERK_ID,
+        name: 'Berserk',
     },
 ];
 

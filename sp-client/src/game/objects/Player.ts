@@ -19,8 +19,9 @@ import { mapDialogStore } from '../../ui/store/MapDialog.store';
 import { playerDialogStore } from '../../ui/store/PlayerDialog.store';
 import { PLAYER_RUNNING, PLAYER_WALKING, PLAYER_MELEE_ATTACK, PLAYER_TAKE_UNARMED_DAMAGE, PLAYER_CAST, MALE_CRITICAL_ATTACK, FEMALE_CRITICAL_ATTACK, MALE_DEATH, FEMALE_DEATH } from '../../constants/SoundFileNames';
 import { EventBus } from '../EventBus';
-import { PLAYER_POSITION_CHANGED, OUT_UI_PLAYER_DIED, OUT_UI_CAST_STARTED, OUT_UI_CAST_READY, OUT_UI_CAST_REMOVED, PLAYER_CONFIRM_SPELL_TARGET, EQUIP_ITEM, IN_UI_CHANGE_GENDER, IN_UI_CHANGE_SKIN_COLOR, IN_UI_CHANGE_UNDERWEAR_COLOR, IN_UI_CHANGE_HAIR_STYLE, ITEM_PICKUP_ATTEMPTED, NATIVE_OVERLAY_HEALTH_BAR_HIDDEN, NATIVE_OVERLAY_HEALTH_BAR_UPDATED } from '../../constants/EventNames';
-import { AttackType, Gender, SkinColor } from '../../Types';
+import { PLAYER_POSITION_CHANGED, PLAYER_INVISIBILITY_CHANGED, OUT_UI_PLAYER_DIED, OUT_UI_CAST_STARTED, OUT_UI_CAST_READY, OUT_UI_CAST_REMOVED, PLAYER_CONFIRM_SPELL_TARGET, EQUIP_ITEM, IN_UI_CHANGE_GENDER, IN_UI_CHANGE_SKIN_COLOR, IN_UI_CHANGE_UNDERWEAR_COLOR, IN_UI_CHANGE_HAIR_STYLE, ITEM_PICKUP_ATTEMPTED, NATIVE_OVERLAY_HEALTH_BAR_HIDDEN, NATIVE_OVERLAY_HEALTH_BAR_UPDATED } from '../../constants/EventNames';
+import { AttackType, Gender, SkinColor, type PlayerInvisibilityChangedEvent } from '../../Types';
+import { TemporaryEffectType } from '../../constants/TemporaryEffects';
 import { calculateAnimationDuration, calculateFrameRateFromDuration } from '../../utils/AnimationUtils';
 import { FloatingText } from '../effects/FloatingText';
 import { getSpellById } from '../../constants/Spells';
@@ -62,6 +63,8 @@ export class Player extends GameObject {
 
     /** Base movement duration for run mode (from slider). Walk mode uses double this. */
     private runMovementSpeedDurationMs: number = 500 - (DEFAULT_MOVEMENT_SPEED / 100) * (500 - 100);
+    /** Run step duration from the movement speed setting, before buffs/debuffs */
+    private baseRunMovementSpeedDurationMs = this.runMovementSpeedDurationMs;
 
     /** Attack range in cells (Chebyshev distance) */
     private attackRange: number = DEFAULT_PLAYER_ATTACK_RANGE;
@@ -74,9 +77,19 @@ export class Player extends GameObject {
 
     /** Attack animation frame rate (frames per second) */
     private attackSpeed: number = DEFAULT_PLAYER_ATTACK_SPEED; // 5 + (30/100)*(30-5) when slider default is 30
+    /** Attack frame rate from the attack speed setting, before buffs/debuffs */
+    private baseAttackSpeed = this.attackSpeed;
 
     /** Cast spell animation duration in milliseconds */
     private castSpeed: number = 1500;
+    /** Cast duration in ms from the cast speed setting, before buffs/debuffs */
+    private baseCastSpeed = this.castSpeed;
+    /** Appearance settings from the Player dialog; buff/debuff visuals are layered on top */
+    private baseTransparency = 0;
+    private baseChilledEffect = false;
+    private baseBerserkEffect = false;
+    /** Last invisibility state announced to monsters */
+    private announcedInvisible = false;
 
     /** Casting circle effect instance (created when entering Cast state) */
     private castingCircleEffect: ReturnType<typeof drawEffect> | undefined = undefined;
@@ -105,6 +118,8 @@ export class Player extends GameObject {
     /** Frame rate for player animations when running */
     /** Calculated from DEFAULT_MOVEMENT_SPEED: 5 FPS (min/slow) to 30 FPS (max/fast) */
     private frameRate: number = 5 + (DEFAULT_MOVEMENT_SPEED / 100) * (30 - 5);
+    /** Movement frame rate from the movement speed setting, before buffs/debuffs */
+    private baseFrameRate = this.frameRate;
 
     /** Frame rate for idle animations (always 10 FPS) */
     private readonly IDLE_FRAME_RATE: number = 10;
@@ -610,6 +625,7 @@ export class Player extends GameObject {
             this.cancelMovement();
             return;
         }
+        this.removeTemporaryEffect(TemporaryEffectType.Invisibility);
         this.pendingSpellId = spellId;
         this.pendingUseCastAnimation = useCastAnimation;
         if (useCastAnimation) {
@@ -763,6 +779,7 @@ export class Player extends GameObject {
      * Overrides GameObject.announceDeath. When hp drops below 1, switches to Die state.
      */
     protected override announceDeath(): void {
+        this.clearTemporaryEffects();
         this.isDead = true;
         this.attackTarget = undefined;
         this.dashMode = false;
@@ -913,7 +930,8 @@ export class Player extends GameObject {
      */
     public setAttackSpeed(sliderValue: number): void {
         const clampedValue = Phaser.Math.Clamp(sliderValue, 1, 100);
-        this.attackSpeed = 5 + (clampedValue / 100) * (30 - 5);
+        this.baseAttackSpeed = 5 + (clampedValue / 100) * (30 - 5);
+        this.attackSpeed = this.baseAttackSpeed * this.getTemporaryEffectSpeedFactor('attack');
     }
 
     /**
@@ -928,21 +946,57 @@ export class Player extends GameObject {
      * 0 = fully opaque, 100 = fully transparent.
      */
     public setTransparency(sliderValue: number): void {
-        this.appearanceManager.setTransparency(sliderValue);
+        this.baseTransparency = sliderValue;
+        this.applyTemporaryEffectVisuals();
     }
 
     /**
      * Sets or clears chilled blue tint on all player appearance items.
      */
     public setChilledEffect(enabled: boolean): void {
-        this.appearanceManager.setChilledEffect(enabled);
+        this.baseChilledEffect = enabled;
+        this.applyTemporaryEffectVisuals();
     }
 
     /**
      * Sets or clears berserk red overlay on body and equipment (excludes weapon, shield, accessory).
      */
     public setBerserkEffect(enabled: boolean): void {
-        this.appearanceManager.setBerserkEffect(enabled);
+        this.baseBerserkEffect = enabled;
+        this.applyTemporaryEffectVisuals();
+    }
+
+    /**
+     * Recomputes speeds and visuals from active buffs/debuffs and tells monsters when invisibility changes.
+     */
+    protected override onTemporaryEffectsChanged(): void {
+        this.applyMovementSpeedEffects();
+        this.attackSpeed = this.baseAttackSpeed * this.getTemporaryEffectSpeedFactor('attack');
+        this.castSpeed = this.baseCastSpeed / this.getTemporaryEffectSpeedFactor('cast');
+        this.applyTemporaryEffectVisuals();
+
+        const invisible = this.hasTemporaryEffect(TemporaryEffectType.Invisibility);
+        if (invisible !== this.announcedInvisible) {
+            this.announcedInvisible = invisible;
+            EventBus.emit(PLAYER_INVISIBILITY_CHANGED, { invisible } satisfies PlayerInvisibilityChangedEvent);
+        }
+    }
+
+    /** Invisible: at least half transparent. Chill / Berserk: tint and overlay, on top of the Player dialog settings. */
+    private applyTemporaryEffectVisuals(): void {
+        const invisible = this.hasTemporaryEffect(TemporaryEffectType.Invisibility);
+        this.appearanceManager.setTransparency(invisible ? Math.max(this.baseTransparency, 50) : this.baseTransparency);
+        this.appearanceManager.setChilledEffect(this.baseChilledEffect || this.hasTemporaryEffect(TemporaryEffectType.Chill));
+        this.appearanceManager.setBerserkEffect(this.baseBerserkEffect || this.hasTemporaryEffect(TemporaryEffectType.Berserk));
+    }
+
+    private applyMovementSpeedEffects(): void {
+        const factor = this.getTemporaryEffectSpeedFactor('movement');
+        this.runMovementSpeedDurationMs = this.baseRunMovementSpeedDurationMs / factor;
+        this.frameRate = this.baseFrameRate * factor;
+        if (this.isInMovementState()) {
+            this.switchToMovement(true);
+        }
     }
 
     /**
@@ -1023,6 +1077,7 @@ export class Player extends GameObject {
      * Starts the melee attack animation facing the monster.
      */
     private startAttack(monster: Monster): void {
+        this.removeTemporaryEffect(TemporaryEffectType.Invisibility);
         this.cancelMovement();
         this.attackTarget = monster;
 
@@ -1403,12 +1458,9 @@ export class Player extends GameObject {
         const clampedValue = Phaser.Math.Clamp(sliderValue, 0, 100);
 
         this.movementSpeed = clampedValue;
-        this.runMovementSpeedDurationMs = 500 - (clampedValue / 100) * (500 - 100);
-        this.frameRate = 5 + (clampedValue / 100) * (30 - 5);
-
-        if (this.isInMovementState()) {
-            this.switchToMovement(true);
-        }
+        this.baseRunMovementSpeedDurationMs = 500 - (clampedValue / 100) * (500 - 100);
+        this.baseFrameRate = 5 + (clampedValue / 100) * (30 - 5);
+        this.applyMovementSpeedEffects();
     }
 
     /**
@@ -1419,7 +1471,8 @@ export class Player extends GameObject {
         const clampedValue = Phaser.Math.Clamp(sliderValue, 1, 100);
         // Linear mapping: slider 1-100 maps to 3000ms-500ms
         // Formula: ms = 3000 - (sliderValue - 1) * (3000 - 500) / (100 - 1)
-        this.castSpeed = 3000 - ((clampedValue - 1) * 2500) / 99;
+        this.baseCastSpeed = 3000 - ((clampedValue - 1) * 2500) / 99;
+        this.castSpeed = this.baseCastSpeed / this.getTemporaryEffectSpeedFactor('cast');
     }
 
     /**

@@ -23,7 +23,7 @@ Goal: move the gameplay that today only exists in the C# multiplayer server (`mu
 | 1 | Spawn areas | Worlds populate their spawn rectangles on load; dead monsters respawn on a timer; wander stays inside the rectangle; far-away monsters go dormant for performance; Summon dialog kept for testing | Medium | Medium | Done |
 | 2 | Monster combat (slim) | Player-only targeting kept. Monsters fight back when hit from any range; chase continues to a give-up distance; damage rolls per hit; pause after landing a hit; Stun hits; attack timing from real animation frame counts | Low | Small-medium | Done |
 | 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters (Orc, Guard, Sorceress) cast at the player | Medium | Medium-large | Done |
-| 4 | Buffs and debuffs | Chill (−50% move/attack/cast, 10s), Berserk (+50%, 40s), Invisibility (40s) on player and monsters; one active effect per group; visuals from mp-client `GameAssetVisualEffect.ts` | Low-medium | Small-medium | Not started |
+| 4 | Buffs and debuffs | Chill (−50% move/attack/cast, 10s), Berserk (+50%, 40s), Invisibility (40s) on player and monsters; one active effect per group; visuals from mp-client `GameAssetVisualEffect.ts` | Low-medium | Small-medium | Done |
 | 5 | Teleports and NPCs | Stepping on a teleport cell moves to the target world/position; NPCs placed from world data | Low | Small | Not started |
 | 6 | Remove multiplayer | Tag the commit, delete `multiplayer/`, client-simulator/protobuf tooling, and multiplayer docs/launch configs | None | Removes ~75k lines, ~310 MB | Not started |
 
@@ -93,8 +93,19 @@ Differences from the server (deliberate):
 - **Fire Wall** damages the 5 tiles the sp-client visual draws (`getFireWallCells`, along the cast direction), not the server's 5×5 square.
 - **Monster spells only damage the player** (the server also splashes other monsters), per the single-player scope.
 - **Ground effects hurt their caster** if they stand in them, same as the server.
-- **On-hit chill** from Chill Wind, Ice Strike, Ice Storm, Blizzard, etc. comes with Phase 4.
 - Player-cast stunning spells (Blizzard) interrupt monsters but don't add a stun beyond the normal monster stunlock.
+
+## Phase 4 notes
+
+What landed (all in `sp-client`):
+
+- `constants/TemporaryEffects.ts`: Chill (−50% move/attack/cast, 10 s, group 1), Berserk (+50%, 40 s, group 2), Invisibility (40 s, group 0), and which spells apply them. Chill comes on hit from Chill Wind, Mass Chill Wind, Ice Strike, Ice Storm (each tick), Blizzard and Mass Blizzard; Mass Ice Strike has none, as on the server.
+- New spells **Invisibility** (25) and **Berserk** (26) in the Cast dialog. They affect whoever stands on the clicked cell: the player first, otherwise a monster.
+- `GameObject` holds active effects with scene-clock expiry (so dormant monsters still expire on time), the one-per-group rule (no refresh), and `getTemporaryEffectSpeedFactor`. Durations are divided by (1 + sum of modifiers), frame rates multiplied.
+- `Player` and `Monster` keep their base speeds and recompute when effects change; visuals layer on top of the Player dialog / Summon dialog settings (chill tint, berserk overlay; invisible player at 50% opacity, invisible monster fully hidden).
+- Invisibility: monsters drop the chase and their hits miss an invisible player (`PLAYER_INVISIBILITY_CHANGED`); invisible monsters can't be clicked. It ends when the holder starts an attack or a cast. Death clears all effects.
+
+Verified in the browser: chill doubles a monster's step time (600 → 1200 ms) and halves attack speed, recasting doesn't refresh it, it expires 10 s after the hit; Berserk speeds the player's move/attack/cast by exactly 1.5× and a second Berserk is blocked; an invisible player took 0 hits in 3 s (5 in 2.5 s visible) and attacking broke it; invisible monster hidden (alpha 0), not targetable, revealed when it attacked; Sorceress Blizzard and the player's own Ice Storm chill the player; death clears effects; chill tint and berserk overlay render and clear. No console errors.
 
 ## Server source references
 

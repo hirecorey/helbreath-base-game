@@ -89,6 +89,7 @@ import { AttackType, CastSpellEvent, Gender, MonsterAttackPlayerEvent, MonsterCa
 import type { Effect } from '../../constants/Items';
 import { CastManager } from '../../utils/CastManager';
 import { SpellDamageManager } from '../../utils/SpellDamageManager';
+import { TemporaryEffectType } from '../../constants/TemporaryEffects';
 import type { MonsterSpellEntry } from '../../constants/MonsterStats';
 import { WeatherManager } from '../../utils/WeatherManager';
 import { mapDialogStore } from '../../ui/store/MapDialog.store';
@@ -554,8 +555,9 @@ export class GameWorld extends Scene {
         const worldPixelX = pointer.x + camera.scrollX;
         const worldPixelY = pointer.y + camera.scrollY;
 
+        // Invisible monsters are hidden and cannot be targeted
         const candidates = getObjectsNearPixel(
-            this.monsters,
+            this.monsters.filter(monster => !monster.isInvisible()),
             (m) => ({ x: m.getAnimatedPixelX(), y: m.getAnimatedPixelY() }),
             worldPixelX,
             worldPixelY,
@@ -1096,6 +1098,14 @@ export class GameWorld extends Scene {
                 if (!this.player) {
                     return;
                 }
+                if (this.spellDamageManager?.isBuffSpell(data.spellId)) {
+                    this.spellDamageManager.castBuffSpell(
+                        data.spellId,
+                        convertPixelPosToWorldPos(data.targetPixelX),
+                        convertPixelPosToWorldPos(data.targetPixelY),
+                    );
+                    return;
+                }
                 this.spellDamageManager?.castPlayerSpell(
                     data.spellId,
                     this.player.getWorldX(),
@@ -1124,7 +1134,8 @@ export class GameWorld extends Scene {
 
     private setupMonsterEventListeners(): void {
         EventBus.on(MONSTER_ATTACK_HIT_PLAYER, (data: MonsterAttackPlayerEvent) => {
-            if (this.player) {
+            // A swing that started before the player turned invisible misses
+            if (this.player && !this.player.hasTemporaryEffect(TemporaryEffectType.Invisibility)) {
                 const monster = this.monsters.find(m => m.getMonsterId() === data.monsterId);
                 if (monster) {
                     if (data.bowAttack && isArrowProjectileTarget(this.player)) {

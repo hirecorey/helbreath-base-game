@@ -9,6 +9,7 @@ import { DEFAULT_MOVEMENT_SPEED, DEPTH_MULTIPLIER, KNOCKBACK_DURATION_MS } from 
 import { HBMap } from '../assets/HBMap';
 import type { ShadowManager } from '../../utils/ShadowManager';
 import { isPlayerItemAppearanceLazyEligible } from '../../utils/ItemAssets';
+import type { TemporaryEffectSpec, TemporaryEffectType } from '../../constants/TemporaryEffects';
 
 export enum GameObjectState {
     Idle = 0,
@@ -133,6 +134,9 @@ export abstract class GameObject {
 
     /** Maximum hit points. Defaults to 100. */
     protected maxHp: number = 100;
+
+    /** Active buffs and debuffs with their scene-clock expiry time */
+    private temporaryEffects = new Map<TemporaryEffectType, { spec: TemporaryEffectSpec; expiresAt: number }>();
 
     /** Stunlock elapsed time in ms (-1 = not active). Used when TakeDamageOnMove completes at cell. */
     protected stunlockElapsedMs: number = -1;
@@ -954,6 +958,8 @@ export abstract class GameObject {
      * @param delta - Time elapsed since last frame in milliseconds
      */
     public update(delta: number): void {
+        this.expireTemporaryEffects();
+
         if (!this.isMoving) {
             return;
         }
@@ -1083,6 +1089,88 @@ export abstract class GameObject {
     /** Returns maximum hit points. */
     public getMaxHp(): number {
         return this.maxHp;
+    }
+
+    /**
+     * Applies a buff or debuff unless an effect of the same group is already active (no refresh).
+     *
+     * @returns Whether the effect was applied
+     */
+    public applyTemporaryEffect(spec: TemporaryEffectSpec): boolean {
+        for (const active of this.temporaryEffects.values()) {
+            if (active.spec.group === spec.group) {
+                return false;
+            }
+        }
+        this.temporaryEffects.set(spec.type, { spec, expiresAt: this.scene.time.now + spec.durationMs });
+        this.onTemporaryEffectsChanged();
+        return true;
+    }
+
+    /** Removes a buff or debuff if active */
+    public removeTemporaryEffect(type: TemporaryEffectType): void {
+        if (this.temporaryEffects.delete(type)) {
+            this.onTemporaryEffectsChanged();
+        }
+    }
+
+    /** Removes all buffs and debuffs (e.g. on death) */
+    public clearTemporaryEffects(): void {
+        if (this.temporaryEffects.size > 0) {
+            this.temporaryEffects.clear();
+            this.onTemporaryEffectsChanged();
+        }
+    }
+
+    public hasTemporaryEffect(type: TemporaryEffectType): boolean {
+        return this.temporaryEffects.has(type);
+    }
+
+    /**
+     * Speed multiplier from active effects for one kind of action: 1 + sum of modifiers.
+     * Divide durations by it, multiply frame rates by it.
+     */
+    protected getTemporaryEffectSpeedFactor(kind: 'movement' | 'attack' | 'cast'): number {
+        let sum = 0;
+        for (const { spec } of this.temporaryEffects.values()) {
+            switch (kind) {
+                case 'movement':
+                    sum += spec.movementSpeedModifier;
+                    break;
+                case 'attack':
+                    sum += spec.attackSpeedModifier;
+                    break;
+                case 'cast':
+                    sum += spec.castSpeedModifier;
+                    break;
+            }
+        }
+        return 1 + sum;
+    }
+
+    /** Removes expired effects. Called from update(). */
+    private expireTemporaryEffects(): void {
+        if (this.temporaryEffects.size === 0) {
+            return;
+        }
+        const now = this.scene.time.now;
+        let changed = false;
+        for (const [type, active] of this.temporaryEffects) {
+            if (now >= active.expiresAt) {
+                this.temporaryEffects.delete(type);
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.onTemporaryEffectsChanged();
+        }
+    }
+
+    /**
+     * Hook called whenever the set of active effects changes. Subclasses recompute speeds and visuals.
+     */
+    protected onTemporaryEffectsChanged(): void {
+        // Default: no-op
     }
 
     /**
