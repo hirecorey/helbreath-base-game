@@ -6,18 +6,6 @@
       "runtimeExecutable": "sh",
       "runtimeArgs": ["-c", "cd sp-client && pnpm dev"],
       "port": 8080
-    },
-    {
-      "name": "mp-client",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "cd multiplayer/mp-client && pnpm exec vite --config vite/config.dev.mjs --port 8081 --strictPort"],
-      "port": 8081
-    },
-    {
-      "name": "mp-server",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "cd multiplayer/server && dotnet run"],
-      "port": 1337
     }
   ]
 }

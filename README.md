@@ -6,7 +6,9 @@
 [![Play Demo](https://img.shields.io/badge/Demo-Live-blue)](https://hbexplorer.helbreath.workers.dev/)
 [![Discord](https://img.shields.io/badge/Chat-Discord-5865F2)](https://discord.gg/P4tBdGRC3q)
 
-Helbreath Base Game is a browser-based recreation of the classic [Helbreath](https://helbreath.fandom.com/wiki/Helbreath_Wiki) client, built with [Phaser 3](https://phaser.io/) and [React](https://react.dev/), paired with an authoritative multiplayer game server written in **C# / .NET 10** that communicates over **WebSockets** with **Protobuf** messages. It is designed as a foundation for building 2D (MMO)(A)RPG-style projects and is best thought of as a playable base client + server or lightweight game framework rather than a complete game.
+> **About this fork:** this is a single-player fork of [ErkoKnoll/helbreath-base-game](https://github.com/ErkoKnoll/helbreath-base-game). The gameplay that only existed in the upstream C# multiplayer server (monster spawn areas, monster combat AI, spell damage, buffs/debuffs, teleports and NPC placement) was ported into the browser client, and the multiplayer server and client were removed. The removed code is preserved at the git tag [`multiplayer-final`](https://github.com/hirecorey/helbreath-base-game/tree/multiplayer-final); see [`docs/PORTING_PLAN.md`](./docs/PORTING_PLAN.md) for what was ported and how.
+
+Helbreath Base Game is a browser-based recreation of the classic [Helbreath](https://helbreath.fandom.com/wiki/Helbreath_Wiki) client, built with [Phaser 3](https://phaser.io/) and [React](https://react.dev/). It runs entirely in the browser as a single-player game, with no server. It is designed as a foundation for building 2D RPG-style projects and is best thought of as a playable base client or lightweight game framework rather than a complete game.
 
 The repository already includes a substantial amount of core functionality:
 
@@ -16,15 +18,11 @@ The repository already includes a substantial amount of core functionality:
 - Grid-based movement
 - Spells and visual effects
 - Items and inventory
-- Combat supporting melee, ranged, and spell attacks in PvP, PvM, and MvM settings (spell damage and MvM only supported in server implementation)
+- Combat supporting melee, ranged, and spell attacks against monsters, with spell damage areas and ground effects
+- Monster spawn areas with respawning, chase and fight-back AI, and spellcasting monsters
+- Buffs and debuffs (Chill, Berserk, Invisibility)
+- Teleports between worlds and NPC placement
 - Music and audio
-
-Server only:
-- Chat
-- Buffs and debuffs
-- Authoritative multiplayer server with client-side prediction and reconciliation
-- Anti-hack timing guards, anti-combat-log disconnect grace, and bump prevention
-- Multi-threaded world scheduling with single-threaded per-map simulation
 
 The project has been developed heavily with AI assistance and is intentionally kept approachable for AI-assisted workflows and iterative expansion.
 
@@ -36,8 +34,7 @@ Join the [Discord server](https://discord.gg/P4tBdGRC3q) for discussion, questio
 
 Play the live demos here:
 
-- Single-player client: [hbexplorer.helbreath.workers.dev](https://hbexplorer.helbreath.workers.dev/)
-- Multiplayer client (connects to a hosted instance of the C# server): [hbexplorermp.helbreath.workers.dev](https://hbexplorermp.helbreath.workers.dev/)
+- Upstream single-player client (without this fork's changes): [hbexplorer.helbreath.workers.dev](https://hbexplorer.helbreath.workers.dev/)
 
 ## Built on or inspired by this project
 
@@ -50,27 +47,25 @@ Projects that extend this codebase or took inspiration from it:
 
 This project is:
 
-- A browser-based Helbreath-inspired base client and a MMO server to go with it
-- A foundation for hobby RPG and MMORPG-style projects
+- A browser-based, single-player Helbreath-inspired base game
+- A foundation for hobby RPG projects
 - A practical codebase for experimenting with Helbreath assets, mechanics, and tooling
 
 This project is not:
 
 - A finished standalone game
-- A drop-in replacement for the original Helbreath client or the old community C++ server — the multiplayer client and server here use their own WebSocket + Protobuf protocol and are not wire-compatible with the legacy C++ server
+- A drop-in replacement for the original Helbreath client, and not compatible with Helbreath servers
+- Multiplayer (the upstream project's multiplayer server and client were removed in this fork)
 
 ## Why This Project Exists
 
 The goal of this repository is to preserve and modernize a large amount of Helbreath client-side content in a form that is easier to understand, extend, and build on. Instead of starting from scratch with rendering, maps, sprites, effects, UI, and core gameplay systems, developers can use this as a working base for fan projects, experiments, and original games built on similar foundations.
 
-It also exists as a **base MMORPG project** — a working, authoritative-server-plus-client template — so that anyone wanting to build a 2D MMORPG does not have to design the full stack (netcode, world threading, visibility, anti-cheat, prediction, reconciliation) from zero.
-
 ## Who This Is For
 
 - Helbreath fans who want to explore or extend the game in a modern browser-based form
-- Hobby developers building 2D RPG or MMORPG-style projects
+- Hobby developers building 2D RPG-style projects
 - Developers interested in Phaser setup with web based UI built in React
-- Developers who want to experiment with or learn from an MMORPG server written in C# / .NET
 - People experimenting with AI-assisted iteration on an existing gameplay codebase
 
 ## About Helbreath
@@ -96,14 +91,6 @@ The client is built with:
 - [React](https://react.dev/)
 - [Radix UI](https://www.radix-ui.com/)
 
-The multiplayer server is built with:
-
-- [C# / .NET 10](https://dotnet.microsoft.com/)
-- [ASP.NET Core WebSockets](https://learn.microsoft.com/aspnet/core/fundamentals/websockets) for transport
-- [Google.Protobuf](https://protobuf.dev/) for the wire format (shared `.proto` schemas in [`multiplayer/proto`](./multiplayer/proto))
-
-For the full server design, see [`multiplayer/server/README.md`](./multiplayer/server/README.md).
-
 ### React and browser UI layer
 
 The client uses Phaser for the game world and React for the surrounding interface. Phaser owns the canvas, sprites, map rendering, animation, and low-level game input. React owns the browser-side UI: dialogs, controls, overlays, debug panels, inventory windows, and other interface pieces that are better expressed as HTML and CSS than as hand-drawn canvas elements.
@@ -116,7 +103,7 @@ Keeping the UI in browser technologies has several practical benefits:
 - **Testability**: Browser UI can be tested with Playwright, Cypress, Testing Library, browser devtools, and ordinary DOM assertions. End-to-end tests can click real buttons, read visible text, validate dialogs, and drive gameplay through simulated keyboard and mouse input. With a small amount of instrumentation, those tests can also understand what is happening in the Phaser layer by combining DOM-visible state, exposed game state, screenshots, and input simulation.
 - **Developer velocity**: React, CSS, Radix UI, browser devtools, hot module reloading, and the broader web ecosystem make it fast to build and iterate on complex UI without rebuilding a custom widget system inside Phaser.
 - **Separation of concerns**: Phaser can stay focused on the game simulation and rendering pipeline, while React handles interface state, layout, forms, overlays, and developer tooling. That keeps each layer closer to the kind of problem it is good at solving.
-- **Portability**: The same UI works in any modern browser without native launchers or platform-specific UI code, which helps with demos, hosted multiplayer clients, and quick sharing during development.
+- **Portability**: The same UI works in any modern browser without native launchers or platform-specific UI code, which helps with demos and quick sharing during development.
 
 Demo video: [`PlaywrightE2EDemo.mp4`](./PlaywrightE2EDemo.mp4) shows browser-side UI being automated with Playwright while the Phaser layer is driven through simulated mouse and keyboard input. Client side E2E testing capabilities are not included with this project.
 
@@ -142,21 +129,10 @@ More setup and development details:
 - UI architecture: [`sp-client/docs/UI_LAYER.md`](./sp-client/docs/UI_LAYER.md)
 - Full docs folder: [`sp-client/docs`](./sp-client/docs/)
 
-### Optional: multiplayer server
-
-To also run the authoritative multiplayer server locally, install the [.NET 10 SDK](https://dotnet.microsoft.com/download) and start it:
-
-```bash
-cd multiplayer/server
-dotnet run
-```
-
-The multiplayer client lives in [`multiplayer/mp-client`](./multiplayer/mp-client) and connects to the server over WebSockets. See [`multiplayer/server/README.md`](./multiplayer/server/README.md) for the full server setup, configuration reference, and performance / stress-test notes.
-
 ## Project Structure
 
-- `sp-client` - Browser-based single-player client
-- `multiplayer` - MMO server and networked client (C# / .NET 10 server in `multiplayer/server`, browser client in `multiplayer/mp-client`, shared protobuf schemas in `multiplayer/proto`, design docs in `multiplayer/docs`)
+- `sp-client` - Browser-based single-player game
+- `docs` - Fork notes, including the [porting plan](./docs/PORTING_PLAN.md) for the gameplay moved from the removed multiplayer server
 - `tools` - Asset and development utilities
 - `reference` - Reference material, including community C++ client/server logic and some configuration files
 
@@ -183,20 +159,10 @@ Client docs ([`sp-client/docs`](./sp-client/docs/)):
 - Inventory and loot: [`sp-client/docs/INVENTORY_AND_LOOT_MECHANICS.md`](./sp-client/docs/INVENTORY_AND_LOOT_MECHANICS.md)
 - Spells and effects: [`sp-client/docs/SPELLS_AND_EFFECTS_MECHANICS.md`](./sp-client/docs/SPELLS_AND_EFFECTS_MECHANICS.md)
 
-Multiplayer docs ([`multiplayer/docs`](./multiplayer/docs/)):
+Fork docs ([`docs`](./docs/)):
 
-- Server configuration: [`multiplayer/docs/SERVER_CONFIGURATION.md`](./multiplayer/docs/SERVER_CONFIGURATION.md)
-- Authorization and storage: [`multiplayer/docs/AUTHORIZATION_AND_STORAGE.md`](./multiplayer/docs/AUTHORIZATION_AND_STORAGE.md)
-- Threading and packet flow: [`multiplayer/docs/SERVER_THREADING_AND_PACKET_FLOW.md`](./multiplayer/docs/SERVER_THREADING_AND_PACKET_FLOW.md)
-- Performance optimizations: [`multiplayer/docs/SERVER_PERFORMANCE_OPTIMIZATIONS.md`](./multiplayer/docs/SERVER_PERFORMANCE_OPTIMIZATIONS.md)
-- Visibility tracking: [`multiplayer/docs/SERVER_VISIBILITY_TRACKING.md`](./multiplayer/docs/SERVER_VISIBILITY_TRACKING.md)
-- Client–server sync: [`multiplayer/docs/CLIENT_SERVER_SYNC.md`](./multiplayer/docs/CLIENT_SERVER_SYNC.md)
-- Network debugging (Server / Performance dialogs, simulated latency): [`multiplayer/docs/NETWORK_DEBUGGING.md`](./multiplayer/docs/NETWORK_DEBUGGING.md)
-- Movement system: [`multiplayer/docs/MOVEMENT_SYSTEM.md`](./multiplayer/docs/MOVEMENT_SYSTEM.md)
-- Combat system: [`multiplayer/docs/COMBAT_SYSTEM.md`](./multiplayer/docs/COMBAT_SYSTEM.md)
-- Spell casting: [`multiplayer/docs/SPELL_CASTING_SYSTEM.md`](./multiplayer/docs/SPELL_CASTING_SYSTEM.md)
-- Inventory and items: [`multiplayer/docs/INVENTORY_AND_ITEMS_SYSTEM.md`](./multiplayer/docs/INVENTORY_AND_ITEMS_SYSTEM.md)
-- Server monster AI: [`multiplayer/docs/SERVER_MONSTER_AI.md`](./multiplayer/docs/SERVER_MONSTER_AI.md)
+- Porting plan and notes for each ported system: [`docs/PORTING_PLAN.md`](./docs/PORTING_PLAN.md)
+- Upstream multiplayer server design: [`multiplayer/server/README.md`](https://github.com/hirecorey/helbreath-base-game/blob/multiplayer-final/multiplayer/server/README.md) at the `multiplayer-final` tag
 
 ## Top Priorities
 
@@ -220,9 +186,11 @@ Multiplayer docs ([`multiplayer/docs`](./multiplayer/docs/)):
 - Weapon hit sounds need to vary based on weapon type, including unarmed. Currently they are fixed to a single sound.
 - BUG: Wyvern special animation frames currently work with a start index of `3`, but should be `4`, so there is probably an off-by-one error somewhere.
 
-### Server-side
+### World content
 
-- Set up map teleport points as in the original game.
-- Set up map monster pits as in the original game.
-- Set up NPC locations as in the original game.
+World data lives in [`sp-client/src/constants/Worlds.ts`](./sp-client/src/constants/Worlds.ts).
+
+- Set up map teleport points as in the original game (only Aresden ↔ Promiseland exists).
+- Set up map monster pits (spawn areas) as in the original game (only Aresden, Elvine and Promiseland have them).
+- Set up NPC locations as in the original game (only the blacksmiths have them).
 

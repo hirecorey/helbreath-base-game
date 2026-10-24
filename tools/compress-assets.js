@@ -3,7 +3,7 @@
 /**
  * Asset compression script
  * Reads assets from a client Assets.ts and compresses them into that client's ZIP archive.
- * When run from a client directory (sp-client or multiplayer/mp-client), that client is used.
+ * When run from a client directory (e.g. sp-client), that client is used.
  * Otherwise, sp-client is used for backward compatibility. Use --client-dir to override.
  * 
  * Compression Level: Default is 1 (recommended for game assets)

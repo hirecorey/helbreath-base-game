@@ -2,7 +2,7 @@
 
 Goal: move the gameplay that today only exists in the C# multiplayer server (`multiplayer/server`) into the single-player browser client (`sp-client`), then delete `multiplayer/`.
 
-`multiplayer/` stays untouched until Phase 6 so it can be read and run side by side for comparison.
+**Status: complete.** All phases are done and `multiplayer/` was removed in Phase 6. The removed code (server, multiplayer client, protobuf schemas, client simulator) is preserved at the git tag `multiplayer-final`; paths below that start with `multiplayer/` refer to that tag, e.g. `git show multiplayer-final:multiplayer/server/Config/GameWorlds.json`.
 
 ## Background
 
@@ -25,7 +25,7 @@ Goal: move the gameplay that today only exists in the C# multiplayer server (`mu
 | 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters (Orc, Guard, Sorceress) cast at the player | Medium | Medium-large | Done |
 | 4 | Buffs and debuffs | Chill (−50% move/attack/cast, 10s), Berserk (+50%, 40s), Invisibility (40s) on player and monsters; one active effect per group; visuals from mp-client `GameAssetVisualEffect.ts` | Low-medium | Small-medium | Done |
 | 5 | Teleports and NPCs | Stepping on a teleport cell moves to the target world/position; NPCs placed from world data | Low | Small | Done |
-| 6 | Remove multiplayer | Tag the commit, delete `multiplayer/`, client-simulator/protobuf tooling, and multiplayer docs/launch configs | None | Removes ~75k lines, ~310 MB | Not started |
+| 6 | Remove multiplayer | Tag the commit, delete `multiplayer/`, client-simulator/protobuf tooling, and multiplayer docs/launch configs | None | Removes ~75k lines, ~310 MB | Done |
 
 With monster-vs-monster out of scope, no phase depends on generalized targeting: Phases 3, 4 and 5 can be done in any order after Phase 1. Phase 3 is most useful after Phase 2, so monsters hit by spells fight back.
 
@@ -121,7 +121,17 @@ Known gaps:
 - The data has only these 2 teleport links and 2 NPC placements; recreating the original game's full teleport network and NPC locations is still to do (also on the original author's list).
 - Music still follows the map (sp-client's map catalog), not the world's `music` field, because most worlds list the generic `default.mp3` while the map catalog has specific tracks.
 
+## Phase 6 notes
+
+- Annotated tag `multiplayer-final` marks the last commit with `multiplayer/`.
+- Removed `multiplayer/` (C# server, multiplayer client and its duplicate assets, protobuf schemas, stress-test reports, multiplayer Cursor rules), `tools/client-simulator.ts`, the `proto:generate` / `client-simulator` scripts and their packages (`@bufbuild/protobuf`, `grpc-tools`, `ts-proto`, `tsx`).
+- Removed the `mp-client` / `mp-server` launch configs and multiplayer sections of the READMEs and asset docs. The root README now describes the single-player fork.
+- Kept: `reference/` (original C++ client/server code for game rules) and `tools/PakToSprConverter` (a .NET asset converter, unrelated to multiplayer).
+
 ## Server source references
+
+Paths are in the `multiplayer-final` tag (under `multiplayer/server/`).
+
 
 | Feature | Server files |
 |---|---|
@@ -137,6 +147,5 @@ Known gaps:
 
 - **Type checking:** `pnpm exec tsc --noEmit` in `sp-client`.
 - **Playing it:** a manual pass in the browser.
-- **Side by side:** comparing behavior against the local multiplayer server while it still exists.
 
 Phase 1 also gets a frame-rate check on the busiest map.

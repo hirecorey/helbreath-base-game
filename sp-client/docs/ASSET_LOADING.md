@@ -63,9 +63,9 @@ If `ENABLE_ZIP_LOADING` is `true`, the game will automatically load from `assets
 3. Reads `src/Config.ts` to honor asset-loading flags
 4. Compresses the selected assets into a single zip file (level 1 - fast compression/decompression)
 
-For `multiplayer/mp-client`, when `LOAD_MONSTER_ASSETS_ON_DEMAND` is `true`, the ZIP intentionally includes only the placeholder monster sprite and its sounds. Other monster sprites and sounds are fetched later as monsters enter view. When on-demand monster loading is `false`, all monster assets are bundled.
+When `LOAD_MONSTER_ASSETS_ON_DEMAND` is `true`, the ZIP intentionally includes only the placeholder monster sprite and its sounds. Other monster sprites and sounds are fetched later as monsters enter view. When on-demand monster loading is `false`, all monster assets are bundled.
 
-The same pattern applies to **maps and tile packs** when `LOAD_MAP_ASSETS_ON_DEMAND` is `true`, and to **player equipped-item appearance `.spr` files** when `LOAD_PLAYER_ITEM_APPEARANCE_ASSETS_ON_DEMAND` is `true` (single-player and multiplayer clients): those entries are omitted from the ZIP and loaded over HTTP when needed.
+The same pattern applies to **maps and tile packs** when `LOAD_MAP_ASSETS_ON_DEMAND` is `true`, and to **player equipped-item appearance `.spr` files** when `LOAD_PLAYER_ITEM_APPEARANCE_ASSETS_ON_DEMAND` is `true`: those entries are omitted from the ZIP and loaded over HTTP when needed.
 
 ### Lazy loading and ZIP optimization
 
