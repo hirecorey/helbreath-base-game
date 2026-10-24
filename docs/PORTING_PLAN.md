@@ -24,7 +24,7 @@ Goal: move the gameplay that today only exists in the C# multiplayer server (`mu
 | 2 | Monster combat (slim) | Player-only targeting kept. Monsters fight back when hit from any range; chase continues to a give-up distance; damage rolls per hit; pause after landing a hit; Stun hits; attack timing from real animation frame counts | Low | Small-medium | Done |
 | 3 | Spell damage | All 26 spells deal damage in their shapes, timed to visuals; ground spells (Ice Storm, Fire Wall, Poison Cloud, Spike Field) tick; the 3 spellcasting monsters (Orc, Guard, Sorceress) cast at the player | Medium | Medium-large | Done |
 | 4 | Buffs and debuffs | Chill (−50% move/attack/cast, 10s), Berserk (+50%, 40s), Invisibility (40s) on player and monsters; one active effect per group; visuals from mp-client `GameAssetVisualEffect.ts` | Low-medium | Small-medium | Done |
-| 5 | Teleports and NPCs | Stepping on a teleport cell moves to the target world/position; NPCs placed from world data | Low | Small | Not started |
+| 5 | Teleports and NPCs | Stepping on a teleport cell moves to the target world/position; NPCs placed from world data | Low | Small | Done |
 | 6 | Remove multiplayer | Tag the commit, delete `multiplayer/`, client-simulator/protobuf tooling, and multiplayer docs/launch configs | None | Removes ~75k lines, ~310 MB | Not started |
 
 With monster-vs-monster out of scope, no phase depends on generalized targeting: Phases 3, 4 and 5 can be done in any order after Phase 1. Phase 3 is most useful after Phase 2, so monsters hit by spells fight back.
@@ -106,6 +106,20 @@ What landed (all in `sp-client`):
 - Invisibility: monsters drop the chase and their hits miss an invisible player (`PLAYER_INVISIBILITY_CHANGED`); invisible monsters can't be clicked. It ends when the holder starts an attack or a cast. Death clears all effects.
 
 Verified in the browser: chill doubles a monster's step time (600 → 1200 ms) and halves attack speed, recasting doesn't refresh it, it expires 10 s after the hit; Berserk speeds the player's move/attack/cast by exactly 1.5× and a second Berserk is blocked; an invisible player took 0 hits in 3 s (5 in 2.5 s visible) and attacking broke it; invisible monster hidden (alpha 0), not targetable, revealed when it attacked; Sorceress Blizzard and the player's own Ice Storm chill the player; death clears effects; chill tint and berserk overlay render and clear. No console errors.
+
+## Phase 5 notes
+
+What landed (all in `sp-client`):
+
+- **Teleports:** when the player steps onto one of the current world's teleport cells (`WorldData.teleports`), the game switches to the target world at the target cell. The switch is deferred until the current frame finishes (the step happens mid-frame), then saves state and restarts the scene like a Map dialog change. `GameStateManager.setWorld` sets the world and its map together, so worlds that share a map (shops, blacksmiths) stay distinct.
+- **NPCs:** each world's NPCs are placed at their exact cells when the world loads, before spawn-area monsters. Like the server, placements may be on cells players can't walk on (Tom stands behind the blacksmith's counter at the forge). The Summon dialog shares `GameWorld.spawnNpc`.
+
+Verified in the browser: Aresden (145,123) → Promiseland at (141,227) with 420 monsters, and back through Promiseland's row to Aresden at (146,123) with 361; Tom appears at (48,33) in both the Aresden and Elvine blacksmiths, including when the map is picked from the Map dialog, and nowhere else. No console errors.
+
+Known gaps:
+
+- The data has only these 2 teleport links and 2 NPC placements; recreating the original game's full teleport network and NPC locations is still to do (also on the original author's list).
+- Music still follows the map (sp-client's map catalog), not the world's `music` field, because most worlds list the generic `default.mp3` while the map catalog has specific tracks.
 
 ## Server source references
 

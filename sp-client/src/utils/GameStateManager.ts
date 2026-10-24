@@ -19,7 +19,7 @@ import {
 import { DEFAULT_PLAYER_ATTACK_SPEED, DEFAULT_PLAYER_ATTACK_RANGE } from '../Config';
 import { AttackType, Gender, SkinColor } from '../Types';
 import { ItemTypes, type InventoryItem, type EquipmentSlot } from '../constants/Items';
-import { resolveWorldForMap } from '../constants/Worlds';
+import { getWorldData, resolveWorldForMap } from '../constants/Worlds';
 
 /**
  * Represents the saved game state structure stored in localStorage.
@@ -297,6 +297,20 @@ export class GameStateManager {
     public setMap(map: string): void {
         this.map = map;
         this.worldId = resolveWorldForMap(map, this.worldId)?.id;
+    }
+
+    /**
+     * Moves the player to a world (and its map). Used by teleports, where the target world matters
+     * even when several worlds share a map.
+     */
+    public setWorld(worldId: string): void {
+        const world = getWorldData(worldId);
+        if (!world) {
+            console.warn(`[GameStateManager] Unknown world '${worldId}'`);
+            return;
+        }
+        this.worldId = world.id;
+        this.map = world.mapFile;
     }
 
     /**

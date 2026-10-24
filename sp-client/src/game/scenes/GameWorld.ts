@@ -8,7 +8,7 @@ import { ArrowProjectile, isArrowProjectileTarget } from '../effects/ArrowProjec
 import { NPC } from '../objects/NPC';
 import { HBMap, TILE_SIZE } from '../assets/HBMap';
 import { EventBus } from '../EventBus';
-import { canvasToScreenPosition, convertWorldPosToPixelPos, convertPixelPosToWorldPos, getNextDirection, Direction, findFreeCellInArea, findMovableLocation, getDistance, isCellMovable } from '../../utils/CoordinateUtils';
+import { canvasToScreenPosition, convertWorldPosToPixelPos, convertPixelPosToWorldPos, getNextDirection, Direction, findFreeCellInArea, findMovableLocation, getDistance, isCellMovable, toDirection } from '../../utils/CoordinateUtils';
 import { getObjectsNearPixel, getObjectsAtWorldCell } from '../../utils/SpatialGrid';
 import {
     DEPTH_MULTIPLIER,
@@ -80,6 +80,7 @@ import {
     OUT_UI_HOVER_GROUND_ITEM,
     OUT_UI_HOVER_GROUND_ITEM_INFO,
     OUT_UI_HOVER_MONSTER,
+    OUT_UI_SET_SELECTED_MAP,
     OUT_UI_SET_SELECTED_MUSIC,
     OUT_MAP_LOADED,
     NATIVE_OVERLAY_MAP_LOADING_HIDDEN,
@@ -146,6 +147,8 @@ export class GameWorld extends Scene {
     private nextMonsterId: number = 0;
     /** Spawn area of each living monster that came from one, so it can be replaced after its corpse is removed */
     private dwellAreaByMonsterId = new Map<number, DwellArea>();
+    /** Set once a teleport starts so the scene restarts only once */
+    private teleportInProgress = false;
     /** List of NPC instances - cleaned up in shutdown() */
     private npcs: NPC[] = [];
     /** Next NPC ID to assign */
@@ -188,6 +191,7 @@ export class GameWorld extends Scene {
         setSoundManager(this.game, this.soundManager);
         // Reset initialization state
         this.initializationStarted = false;
+        this.teleportInProgress = false;
         this.framesUntilOverlayRemoval = 0;
         this.loadingMap = true;
 
@@ -869,28 +873,10 @@ export class GameWorld extends Scene {
                 return;
             }
 
-            const npcData = getNPCData(data.spriteName);
-
-            if (!npcData) {
-                console.warn(`[GameWorld] Cannot summon NPC: unknown sprite ${data.spriteName}`);
-                return;
+            const npc = this.spawnNpc(data.spriteName, movableLocation.x, movableLocation.y, data.direction);
+            if (npc) {
+                console.log(`[GameWorld] Summoned NPC ${data.spriteName} at (${movableLocation.x}, ${movableLocation.y})`);
             }
-
-            const npcId = this.nextNPCId++;
-
-            const npc = new NPC(this, {
-                x: movableLocation.x,
-                y: movableLocation.y,
-                spriteName: data.spriteName.toLowerCase(),
-                displayName: npcData.name,
-                direction: data.direction,
-                soundManager: this.soundManager,
-                map,
-                npcId,
-            });
-
-            this.npcs.push(npc);
-            console.log(`[GameWorld] Summoned NPC ${data.spriteName} (ID: ${npcId}) at (${movableLocation.x}, ${movableLocation.y})`);
         });
     }
 
@@ -1062,6 +1048,83 @@ export class GameWorld extends Scene {
         return new Phaser.Geom.Rectangle(view.x - margin, view.y - margin, view.width + margin * 2, view.height + margin * 2);
     }
 
+    /**
+     * Creates an NPC at a cell and adds it to the world.
+     *
+     * @returns The NPC, or undefined for an unknown sprite
+     */
+    private spawnNpc(spriteName: string, x: number, y: number, direction: Direction): NPC | undefined {
+        const npcData = getNPCData(spriteName);
+        if (!npcData) {
+            console.warn(`[GameWorld] Cannot spawn NPC: unknown sprite ${spriteName}`);
+            return undefined;
+        }
+
+        const npc = new NPC(this, {
+            x,
+            y,
+            spriteName: spriteName.toLowerCase(),
+            displayName: npcData.name,
+            direction,
+            soundManager: this.soundManager,
+            map: this.getCurrentMap(),
+            npcId: this.nextNPCId++,
+        });
+        this.npcs.push(npc);
+        return npc;
+    }
+
+    /**
+     * Places the current world's NPCs at their exact cells. Placements may be on cells players can't walk on
+     * (e.g. a shopkeeper behind a counter). Runs before spawn-area monsters so monsters cannot take their cells.
+     */
+    private spawnWorldNpcs(): void {
+        const worldId = getGameStateManager(this.game).getWorldId();
+        const world = worldId === undefined ? undefined : getWorldData(worldId);
+        if (!world) {
+            return;
+        }
+
+        const map = this.getCurrentMap();
+        for (const placement of world.npcs) {
+            if (!map.getTile(placement.x, placement.y)) {
+                console.warn(`[GameWorld] Cannot place NPC '${placement.spriteName}': (${placement.x}, ${placement.y}) is outside the map`);
+                continue;
+            }
+            this.spawnNpc(placement.spriteName, placement.x, placement.y, toDirection(placement.direction));
+        }
+    }
+
+    /**
+     * Moves the player to another world when they step onto one of the current world's teleport cells.
+     */
+    private tryTeleportAt(x: number, y: number): void {
+        if (this.teleportInProgress || !this.player || this.player.getIsDead()) {
+            return;
+        }
+        const worldId = getGameStateManager(this.game).getWorldId();
+        const world = worldId === undefined ? undefined : getWorldData(worldId);
+        const link = world?.teleports.find(teleport => teleport.cells.some(cell => cell.x === x && cell.y === y));
+        if (!link) {
+            return;
+        }
+
+        this.teleportInProgress = true;
+        console.log(`[GameWorld] Teleporting from '${worldId}' (${x}, ${y}) to '${link.targetWorldId}' (${link.targetX}, ${link.targetY})`);
+        // This runs inside the player's step, mid-frame. Switch worlds after the frame finishes, as a Map dialog change
+        // does: the rest of this frame still reads the current map from game state.
+        queueMicrotask(() => {
+            // Dropped items don't persist across maps
+            getLootManager(this.game).clear();
+            const gameStateManager = getGameStateManager(this.game);
+            gameStateManager.setWorld(link.targetWorldId);
+            gameStateManager.setWorldPos(link.targetX, link.targetY);
+            gameStateManager.saveGameState();
+            EventBus.emit(OUT_UI_SET_SELECTED_MAP, gameStateManager.getMap());
+            this.scene.restart();
+        });
+    }
+
     private setupNPCEventListeners(): void {
         // Listen for NPC death events to remove them from the game
         EventBus.on(NPC_DEAD, (data: { npcId: number }) => {
@@ -1129,6 +1192,7 @@ export class GameWorld extends Scene {
         // Listen for player position changes to update monster spatial audio
         EventBus.on(PLAYER_POSITION_CHANGED, (data: { x: number; y: number }) => {
             this.updateMonsterSpatialAudio(data.x, data.y);
+            this.tryTeleportAt(data.x, data.y);
         });
     }
 
@@ -1634,6 +1698,7 @@ export class GameWorld extends Scene {
         // Update GameStateManager with initial player position
         gameStateManager.setWorldPos(playerWorldX, playerWorldY);
 
+        this.spawnWorldNpcs();
         this.spawnWorldMonsters();
 
         // Apply saved movement speed from GameStateManager
