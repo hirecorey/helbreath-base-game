@@ -101,6 +101,9 @@ export function MinimapDialog({
     const minimapImage = useStore(minimapDialogStore, (state) => state.minimapImage);
     const minimapScale = useStore(minimapDialogStore, (state) => state.minimapScale);
     const minimapOriginalSize = useStore(minimapDialogStore, (state) => state.minimapOriginalSize);
+    const fogCanvas = useStore(minimapDialogStore, (state) => state.fogCanvas);
+    const fogVersion = useStore(minimapDialogStore, (state) => state.fogVersion);
+    const fogOverlayRef = useRef<HTMLCanvasElement>(null);
     const [minimapSize, setMinimapSize] = useState(DEFAULT_MINIMAP_SIZE);
     const [minimapPlayerDot, setMinimapPlayerDot] = useState<{ x: number; y: number } | undefined>(undefined);
     const [resizingCorner, setResizingCorner] = useState<ResizeCorner>(undefined);
@@ -137,6 +140,17 @@ export function MinimapDialog({
         
         setMinimapPlayerDot({ x: minimapX, y: minimapY });
     }, [playerPosition.worldX, playerPosition.worldY, minimapScale]);
+
+    // Copy the fog of war (one pixel per tile) onto the overlay; CSS scales it smoothly over the minimap
+    useEffect(() => {
+        const overlay = fogOverlayRef.current;
+        const context = overlay?.getContext('2d');
+        if (!overlay || !context || !fogCanvas) {
+            return;
+        }
+        context.clearRect(0, 0, overlay.width, overlay.height);
+        context.drawImage(fogCanvas, 0, 0);
+    }, [fogCanvas, fogVersion, minimapImage]);
 
     const handleResizeStart = (corner: Exclude<ResizeCorner, undefined>) => (e: React.PointerEvent) => {
         // Only left mouse button - avoid conflict with right-click close
@@ -264,6 +278,22 @@ export function MinimapDialog({
                             objectFit: 'contain'
                         }}
                     />
+                    {fogCanvas && minimapOriginalSize > 0 && (
+                        // Unexplored areas black, explored dimmed, current vision clear (same as the world view)
+                        <canvas
+                            ref={fogOverlayRef}
+                            width={fogCanvas.width}
+                            height={fogCanvas.height}
+                            style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                width: `${(convertWorldPosToPixelPos(fogCanvas.width) * minimapScale / minimapOriginalSize) * minimapSize}px`,
+                                height: `${(convertWorldPosToPixelPos(fogCanvas.height) * minimapScale / minimapOriginalSize) * minimapSize}px`,
+                                pointerEvents: 'none',
+                            }}
+                        />
+                    )}
                     {minimapPlayerDot && minimapOriginalSize > 0 && (
                         <div
                             style={{

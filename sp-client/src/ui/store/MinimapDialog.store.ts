@@ -1,9 +1,9 @@
 import { Store } from '@tanstack/react-store';
 import { EventBus } from '../../game/EventBus';
-import { CachedMinimap } from '../../Types';
+import { CachedMinimap, type MinimapFogUpdatedEvent } from '../../Types';
 import { Minimap } from '../../constants/Assets';
 import { convertWorldPosToPixelPos } from '../../utils/CoordinateUtils';
-import { OUT_UI_MINIMAP_CAPTURED, OUT_UI_MINIMAP_LOADING } from '../../constants/EventNames';
+import { OUT_UI_MINIMAP_CAPTURED, OUT_UI_MINIMAP_FOG_UPDATED, OUT_UI_MINIMAP_LOADING } from '../../constants/EventNames';
 
 export interface MinimapLoadingPayload {
     minimap: Minimap;
@@ -29,6 +29,10 @@ interface MinimapDialogState {
     minimapImage: string | undefined;
     minimapScale: number;
     minimapOriginalSize: number;
+    /** Fog of war canvas (one pixel per map tile) drawn over the minimap; undefined when vision is off */
+    fogCanvas: HTMLCanvasElement | undefined;
+    /** Incremented whenever the fog canvas content changes, so the minimap redraws it */
+    fogVersion: number;
 }
 
 const initialState: MinimapDialogState = {
@@ -37,6 +41,8 @@ const initialState: MinimapDialogState = {
     minimapImage: undefined,
     minimapScale: 0,
     minimapOriginalSize: 0,
+    fogCanvas: undefined,
+    fogVersion: 0,
 };
 
 export const minimapDialogStore = new Store<MinimapDialogState>(initialState);
@@ -51,6 +57,15 @@ export const toggleMinimapDialog = () => {
 export const setMinimapDialogOpen = (value: boolean) => {
     minimapDialogStore.setState((state) => ({ ...state, isOpen: value }));
 };
+
+// Fog of war updates from the game (the canvas object stays the same while its pixels change)
+EventBus.on(OUT_UI_MINIMAP_FOG_UPDATED, (payload: MinimapFogUpdatedEvent) => {
+    minimapDialogStore.setState((state) => ({
+        ...state,
+        fogCanvas: payload.canvas,
+        fogVersion: state.fogVersion + 1,
+    }));
+});
 
 // Initialize EventBus listener for minimap loading (shows "Loading minimap")
 EventBus.on(OUT_UI_MINIMAP_LOADING, (payload: MinimapLoadingPayload) => {

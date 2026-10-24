@@ -94,6 +94,14 @@ export interface PlayerConfirmSpellTargetEvent {
 export type SpellVisualTarget = PlayerConfirmSpellTargetEvent;
 
 /**
+ * Event payload when the fog of war changes. Emitted from VisionManager to the minimap.
+ */
+export interface MinimapFogUpdatedEvent {
+    /** Fog canvas with one pixel per map tile (alpha = darkness), or undefined when there is no fog */
+    canvas: HTMLCanvasElement | undefined;
+}
+
+/**
  * Event payload when the player gains or loses Invisibility. Emitted from Player.
  */
 export interface PlayerInvisibilityChangedEvent {

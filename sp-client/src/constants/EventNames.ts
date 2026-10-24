@@ -169,6 +169,9 @@ export const OUT_UI_CAMERA_FOLLOW_PLAYER_CHANGED = 'ui-receive-camera-follow-pla
 export const OUT_UI_MINIMAP_CAPTURED = 'ui-minimap-captured';
 /** Emitted when a map starts loading. Payload: { minimap, mapName, mapSizeX?, mapSizeY? } */
 export const OUT_UI_MINIMAP_LOADING = 'ui-minimap-loading';
+
+/** Fog of war changed (or the map changed). Payload: MinimapFogUpdatedEvent. The minimap draws the fog over its image. */
+export const OUT_UI_MINIMAP_FOG_UPDATED = 'ui-minimap-fog-updated';
 export const OUT_UI_PLAYER_DIED = 'player-died';
 export const OUT_MAP_LOADED = 'map-loaded';
 

@@ -2,6 +2,9 @@ import type { Scene } from 'phaser';
 import type { HBMap } from '../game/assets/HBMap';
 import { TILE_SIZE } from '../game/assets/HBMap';
 import { Direction, getDirectionOffset } from './CoordinateUtils';
+import { EventBus } from '../game/EventBus';
+import { OUT_UI_MINIMAP_FOG_UPDATED } from '../constants/EventNames';
+import type { MinimapFogUpdatedEvent } from '../Types';
 import {
     VISION_EDGE_SOFTNESS_TILES,
     VISION_EXPLORED_DARKNESS,
@@ -19,6 +22,9 @@ const EXPLORATION_STORAGE_PREFIX = 'exploration:';
 
 /** How often explored tiles are saved while playing, in ms (also saved when leaving the map) */
 const EXPLORATION_SAVE_INTERVAL_MS = 3000;
+
+/** How often the minimap is told the fog changed while the player moves, in ms */
+const MINIMAP_UPDATE_INTERVAL_MS = 250;
 
 /** Farthest tile distance from the player that can be (partly) visible */
 const MAX_VISION_TILES = VISION_RANGE_FORWARD_TILES + VISION_EDGE_SOFTNESS_TILES / 2 + 1;
@@ -48,6 +54,9 @@ export class VisionManager {
     private readonly explored: Uint8Array;
     private exploredDirty = false;
     private msSinceSave = 0;
+    /** Fog changed since the minimap was last notified */
+    private minimapDirty = false;
+    private msSinceMinimapUpdate = 0;
 
     /** Player position in tile units (tile centers are whole numbers) */
     private centerX = 0;
@@ -106,6 +115,8 @@ export class VisionManager {
 
         scene.sys.events.on(Phaser.Scenes.Events.ADDED_TO_SCENE, this.onAddedToScene);
         scene.sys.events.on(Phaser.Scenes.Events.REMOVED_FROM_SCENE, this.onRemovedFromScene);
+
+        this.minimapDirty = true;
     }
 
     /**
@@ -146,6 +157,13 @@ export class VisionManager {
         this.msSinceSave += delta;
         if (this.exploredDirty && this.msSinceSave >= EXPLORATION_SAVE_INTERVAL_MS) {
             this.saveExplored();
+        }
+
+        this.msSinceMinimapUpdate += delta;
+        if (this.minimapDirty && (this.msSinceMinimapUpdate >= MINIMAP_UPDATE_INTERVAL_MS || delta === 0)) {
+            this.minimapDirty = false;
+            this.msSinceMinimapUpdate = 0;
+            EventBus.emit(OUT_UI_MINIMAP_FOG_UPDATED, { canvas: this.texture.getCanvas() } satisfies MinimapFogUpdatedEvent);
         }
     }
 
@@ -194,6 +212,7 @@ export class VisionManager {
         this.scene.sys.events.off(Phaser.Scenes.Events.ADDED_TO_SCENE, this.onAddedToScene);
         this.scene.sys.events.off(Phaser.Scenes.Events.REMOVED_FROM_SCENE, this.onRemovedFromScene);
         this.dynamicObjects.clear();
+        EventBus.emit(OUT_UI_MINIMAP_FOG_UPDATED, { canvas: undefined } satisfies MinimapFogUpdatedEvent);
         this.image.destroy();
         this.scene.textures.remove(this.textureKey);
     }
@@ -270,6 +289,7 @@ export class VisionManager {
             this.pixels, 0, 0, rect.x0, rect.y0, rect.x1 - rect.x0 + 1, rect.y1 - rect.y0 + 1);
         this.refreshTexture();
         this.hasRendered = true;
+        this.minimapDirty = true;
     }
 
     /**
