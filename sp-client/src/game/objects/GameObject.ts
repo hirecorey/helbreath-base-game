@@ -1110,8 +1110,26 @@ export abstract class GameObject {
         return true;
     }
 
+    /** Direction the object is facing */
+    public getDirection(): Direction {
+        return this.direction;
+    }
+
     /**
-     * Hides or shows the object's sprites and shadow because it is outside / inside the player's visibility radius.
+     * Adds every display object this game object draws (assets and shadow) to `into`.
+     */
+    public collectDisplayObjects(into: Set<Phaser.GameObjects.GameObject>): void {
+        for (const asset of this.assets) {
+            asset.collectDisplayObjects(into);
+        }
+        const shadow = this.shadowManager?.getSprite();
+        if (shadow) {
+            into.add(shadow);
+        }
+    }
+
+    /**
+     * Hides or shows the object's sprites and shadow because it is outside / inside the player's vision.
      * Separate from alpha, which Invisibility and corpse fading use.
      */
     public setHiddenByFog(hidden: boolean): void {

@@ -439,6 +439,13 @@ export class ShadowManager {
     }
 
     /**
+     * Gets the shadow sprite, if created.
+     */
+    public getSprite(): GameObjects.Sprite | undefined {
+        return this.shadowSprite;
+    }
+
+    /**
      * Shows or hides the shadow sprite.
      */
     public setVisible(visible: boolean): void {

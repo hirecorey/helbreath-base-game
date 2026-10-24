@@ -180,9 +180,9 @@ export const DEPTH_MULTIPLIER = 100;
 export const HIGH_DEPTH = 5000000;
 
 /**
- * Depth for the limited-visibility fog: above world objects and effects (HIGH_DEPTH), below loading overlays.
+ * Depth for the vision fog: above world objects and effects (HIGH_DEPTH), below loading overlays.
  */
-export const VISIBILITY_FOG_DEPTH = 9000000;
+export const VISION_FOG_DEPTH = 9000000;
 
 /**
  * Depth for loading overlay (covers screen during map load).
@@ -252,13 +252,28 @@ export const SPRITES_WITH_SHADOWS: readonly string[] = [
 export const ENABLE_ZIP_LOADING = false;
 
 /**
- * Limited visibility: the player only sees VISIBILITY_RADIUS_TILES around their character. Beyond that the world is
- * covered by dark fog and monsters, NPCs and ground items are hidden.
+ * Vision and fog of war. The player sees an area around them that reaches farther in the facing direction.
+ * Tiles they have seen stay remembered (dimmed terrain, no monsters/NPCs/items/effects); tiles never seen are black.
  */
-export const VISIBILITY_ENABLED = true;
+export const VISION_ENABLED = true;
 
-/** Radius in tiles (circular) at which the fog becomes fully dark and entities are hidden */
-export const VISIBILITY_RADIUS_TILES = 12;
+/** How far the player sees directly ahead, in tiles */
+export const VISION_RANGE_FORWARD_TILES = 13;
 
-/** Width in tiles of the soft edge, inside the radius, over which visibility fades to dark */
-export const VISIBILITY_FEATHER_TILES = 3;
+/** How far the player sees directly behind, in tiles (also the all-around awareness close to the player) */
+export const VISION_RANGE_BEHIND_TILES = 5;
+
+/**
+ * Shape between behind and forward range: range = behind + (forward - behind) * ((1 + cos(angle)) / 2) ^ exponent.
+ * 1 gives an even egg shape; higher values narrow the forward reach (with 1.5 the sides see about 8 tiles).
+ */
+export const VISION_SHAPE_EXPONENT = 1.5;
+
+/** Width in tiles of the soft edge where vision fades into explored / unexplored darkness */
+export const VISION_EDGE_SOFTNESS_TILES = 2;
+
+/** Darkness (0-1) of explored tiles outside current vision; unexplored tiles are fully dark */
+export const VISION_EXPLORED_DARKNESS = 0.35;
+
+/** Time in ms for the vision area to swing to a new facing direction */
+export const VISION_TURN_SMOOTHING_MS = 150;

@@ -20,7 +20,7 @@ import {
     MAP_OBJECT_COLLISION_RADIUS_CELLS,
     MONSTER_HOVER_OVERLAY_ANCHOR_OFFSET_Y,
     MONSTER_PLACEHOLDER_SPRITE,
-    VISIBILITY_ENABLED,
+    VISION_ENABLED,
 } from '../../Config';
 import { InputManager } from '../../utils/InputManager';
 import { CameraManager } from '../../utils/CameraManager';
@@ -91,7 +91,7 @@ import { AttackType, CastSpellEvent, Gender, MonsterAttackPlayerEvent, MonsterCa
 import type { Effect } from '../../constants/Items';
 import { CastManager } from '../../utils/CastManager';
 import { SpellDamageManager } from '../../utils/SpellDamageManager';
-import { VisibilityManager } from '../../utils/VisibilityManager';
+import { VisionManager } from '../../utils/VisionManager';
 import { TemporaryEffectType } from '../../constants/TemporaryEffects';
 import type { MonsterSpellEntry } from '../../constants/MonsterStats';
 import { WeatherManager } from '../../utils/WeatherManager';
@@ -177,8 +177,8 @@ export class GameWorld extends Scene {
     private castManager: CastManager | undefined = undefined;
     /** Spell damage - delayed spell hits and ground effects */
     private spellDamageManager: SpellDamageManager | undefined = undefined;
-    /** Limited visibility fog around the player (undefined when VISIBILITY_ENABLED is false) */
-    private visibilityManager: VisibilityManager | undefined = undefined;
+    /** Directional vision and fog of war (undefined when VISION_ENABLED is false) */
+    private visionManager: VisionManager | undefined = undefined;
     /** Map that is currently displayed (for proper cleanup on shutdown - gameStateManager may already point to new map) */
     private displayedMap: HBMap | undefined = undefined;
     /** Ground items (dropped loot) - cleaned up in shutdown() */
@@ -251,8 +251,8 @@ export class GameWorld extends Scene {
             this.handleMapObjectCollisions();
         }
 
-        if (this.visibilityManager && this.player) {
-            this.visibilityManager.setCenter(this.player.getAnimatedPixelX(), this.player.getAnimatedPixelY());
+        if (this.visionManager && this.player) {
+            this.visionManager.update(delta, this.player.getAnimatedPixelX(), this.player.getAnimatedPixelY(), this.player.getDirection());
             for (const npc of this.npcs) {
                 npc.setHiddenByFog(!this.isVisibleToPlayer(npc.getAnimatedPixelX(), npc.getAnimatedPixelY()));
             }
@@ -268,7 +268,7 @@ export class GameWorld extends Scene {
         // monsters per map, only the ones the player can see (or that are busy) need to run AI.
         const activeBounds = this.getMonsterActiveBounds();
         for (const monster of this.monsters) {
-            if (this.visibilityManager) {
+            if (this.visionManager) {
                 monster.setHiddenByFog(!this.isVisibleToPlayer(monster.getAnimatedPixelX(), monster.getAnimatedPixelY()));
             }
             if (monster.isAtRest() &&
@@ -279,6 +279,7 @@ export class GameWorld extends Scene {
         }
 
         this.spellDamageManager?.update(delta);
+        this.hideDynamicObjectsOutsideVision();
 
         // Update weather (rain particles, sound)
         if (this.weatherManager && this.cameras?.main) {
@@ -294,8 +295,8 @@ export class GameWorld extends Scene {
         this.castManager?.destroy();
         this.spellDamageManager?.destroy();
         this.spellDamageManager = undefined;
-        this.visibilityManager?.destroy();
-        this.visibilityManager = undefined;
+        this.visionManager?.destroy();
+        this.visionManager = undefined;
         this.castManager = undefined;
         if (this.player?.hasPendingSpell()) {
             this.player.cancelPendingCast();
@@ -908,10 +909,32 @@ export class GameWorld extends Scene {
     }
 
     /**
-     * Whether a pixel position is within the player's visibility radius (always true when limited visibility is off).
+     * Hides spell effects, projectiles and floating text outside the player's vision. Monsters, NPCs, ground items
+     * and the player are skipped: their visibility is set from their cell, not their sprites' positions.
+     */
+    private hideDynamicObjectsOutsideVision(): void {
+        if (!this.visionManager) {
+            return;
+        }
+        const managedElsewhere = new Set<Phaser.GameObjects.GameObject>();
+        this.player?.collectDisplayObjects(managedElsewhere);
+        for (const monster of this.monsters) {
+            monster.collectDisplayObjects(managedElsewhere);
+        }
+        for (const npc of this.npcs) {
+            npc.collectDisplayObjects(managedElsewhere);
+        }
+        for (const groundItem of this.groundItems) {
+            groundItem.collectDisplayObjects(managedElsewhere);
+        }
+        this.visionManager.updateDynamicObjects(managedElsewhere);
+    }
+
+    /**
+     * Whether a pixel position is in the player's current vision (always true when vision is off).
      */
     private isVisibleToPlayer(pixelX: number, pixelY: number): boolean {
-        return !this.visibilityManager || this.visibilityManager.isVisibleAt(pixelX, pixelY);
+        return !this.visionManager || this.visionManager.isVisibleAt(pixelX, pixelY);
     }
 
     /**
@@ -1735,9 +1758,9 @@ export class GameWorld extends Scene {
         this.spawnWorldNpcs();
         this.spawnWorldMonsters();
 
-        if (VISIBILITY_ENABLED) {
-            this.visibilityManager = new VisibilityManager(this);
-            this.visibilityManager.setCenter(this.player.getAnimatedPixelX(), this.player.getAnimatedPixelY());
+        if (VISION_ENABLED) {
+            this.visionManager = new VisionManager(this, map, gameStateManager.getWorldId() ?? gameStateManager.getMap());
+            this.visionManager.update(0, this.player.getAnimatedPixelX(), this.player.getAnimatedPixelY(), this.player.getDirection());
         }
 
         // Apply saved movement speed from GameStateManager

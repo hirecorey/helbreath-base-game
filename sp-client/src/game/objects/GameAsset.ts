@@ -1589,6 +1589,23 @@ export class GameAsset {
     }
 
     /**
+     * Adds every display object this asset draws (sprite, overlays, ghost, tree shadow) to `into`.
+     */
+    public collectDisplayObjects(into: Set<GameObjects.GameObject>): void {
+        into.add(this.sprite);
+        if (this.berserkOverlay) {
+            into.add(this.berserkOverlay);
+        }
+        if (this.glareOverlay) {
+            into.add(this.glareOverlay);
+        }
+        if (this.ghostSprite) {
+            into.add(this.ghostSprite);
+        }
+        this.treeShadowAsset?.collectDisplayObjects(into);
+    }
+
+    /**
      * Gets the bounding rectangle of the sprite in world coordinates.
      * 
      * @returns A rectangle object with x, y, width, height

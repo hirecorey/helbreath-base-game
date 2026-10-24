@@ -3,6 +3,7 @@ import type { WeatherMode } from '../ui/store/MapDialog.store';
 import { RAIN_SOUND } from '../constants/SoundFileNames';
 import { HIGH_DEPTH, DEPTH_MULTIPLIER } from '../Config';
 import { convertPixelPosToWorldPos } from './CoordinateUtils';
+import { VISION_EXEMPT_NAME } from './VisionManager';
 import type { SoundManager } from './SoundManager';
 
 /** Precipitation particle state (effect2 sheet 1) */
@@ -179,6 +180,8 @@ export class WeatherManager {
 
             const sprite = this.scene.add.sprite(pixelX, pixelY, EFFECT2_TEXTURE_KEY, initialFrame);
             sprite.setDepth(HIGH_DEPTH);
+            // Weather falls across the whole screen, so vision never hides it
+            sprite.setName(VISION_EXEMPT_NAME);
             sprite.setVisible(false);
 
             this.particles.push({ pixelX, pixelY, step, sprite });
